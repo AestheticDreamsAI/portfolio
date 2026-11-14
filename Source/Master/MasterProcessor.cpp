@@ -162,6 +162,7 @@ void MasterProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Midi
     limiter.setCeilingDb (ceiling->load());
     driveSmooth.setTargetValue (juce::Decibels::decibelsToGain (drive->load()));
 
+    const bool ref = refMode.load();
     float* L = buffer.getWritePointer (0);
     float* R = stereo ? buffer.getWritePointer (1) : nullptr;
     float maxDh = 0, maxComp = 0, maxLim = 0;
@@ -171,20 +172,26 @@ void MasterProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Midi
         float l = L[i];
         float r = stereo ? R[i] : l;
 
-        deharsher.process (l, r);
-        if (stereo)
-            shaper.process (l, r);
+        if (! ref)
+        {
+            deharsher.process (l, r);
+            if (stereo)
+                shaper.process (l, r);
 
-        const float g = (float) comp.process (l, r);
-        l *= g;
-        r *= g;
+            const float g = (float) comp.process (l, r);
+            l *= g;
+            r *= g;
+        }
 
         // Lautheit vor Drive (fuer die Drive-Berechnung)
         const float pl = kPre[0].process (l);
         const float pr = stereo ? kPre[1].process (r) : 0.0f;
         acc.msPre += (double) pl * pl + (double) pr * pr;
-        acc.compLevelDb += comp.lastLevelDb();
-        acc.harshDb += deharsher.lastRatioDb();
+        if (! ref)
+        {
+            acc.compLevelDb += comp.lastLevelDb();
+            acc.harshDb += deharsher.lastRatioDb();
+        }
 
         const float d = driveSmooth.getNextValue();
         l *= d;
@@ -195,8 +202,11 @@ void MasterProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Midi
         const float qr = stereo ? kPost[1].process (r) : 0.0f;
         acc.msPost += (double) ql * ql + (double) qr * qr;
 
-        maxDh = std::max (maxDh, (float) deharsher.currentGainReductionDb());
-        maxComp = std::max (maxComp, (float) comp.currentGainReductionDb());
+        if (! ref)
+        {
+            maxDh = std::max (maxDh, (float) deharsher.currentGainReductionDb());
+            maxComp = std::max (maxComp, (float) comp.currentGainReductionDb());
+        }
         maxLim = std::max (maxLim, (float) limiter.currentGainReductionDb());
 
         L[i] = l;
@@ -232,6 +242,8 @@ void MasterProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Midi
 
 float MasterProcessor::getTargetLufs() const
 {
+    if (refMode.load())
+        return (float) referenceLufs;
     return targetLufs[(size_t) juce::jlimit (0, 3, (int) target->load())];
 }
 
@@ -259,7 +271,9 @@ void MasterProcessor::enterPhase (Phase p)
     {
         case Phase::Spectrum:
             analyzer.startLearning (kSpectrumSeconds);
-            statusText = juce::String::fromUTF8 ("1/4 Klangbalance: höre zu … spiel den Refrain oder den lautesten Teil.");
+            statusText = refMode.load()
+                ? juce::String::fromUTF8 ("1/3 Klang: höre zu … spiel den Refrain oder den lautesten Teil.")
+                : juce::String::fromUTF8 ("1/4 Klangbalance: höre zu … spiel den Refrain oder den lautesten Teil.");
             break;
         case Phase::Dynamics:
             statusText = juce::String::fromUTF8 ("2/4 Dynamik: messe Pegel und Schärfe …");
@@ -277,6 +291,24 @@ void MasterProcessor::enterPhase (Phase p)
 
 void MasterProcessor::onSpectrumLearned (std::vector<double> db)
 {
+    if (refMode.load())
+    {
+        std::vector<double> ref;
+        {
+            const juce::ScopedLock sl (learnedLock);
+            ref = referenceDb;
+        }
+        const auto result = fitEq (makeReferenceProfile (ref), db, getAnalysisRate());
+        {
+            const juce::ScopedLock sl (learnedLock);
+            learnedDb = std::move (db);
+            alignedTargetDb = result.alignedTargetDb;
+        }
+        eqparams::applyEq (apvts, result.eq);
+        enterPhase (Phase::Loudness); // keine Dynamik-Phase: Kompressor und Schaerfe-Schutz sind aus
+        return;
+    }
+
     const auto result = fitEq (mixBusProfile(), db, getAnalysisRate());
 
     // Frequenz fuer den Schaerfe-Schutz: groesster Ueberschuss gegenueber dem Ziel zwischen 2 und 6 kHz
@@ -366,9 +398,13 @@ void MasterProcessor::timerCallback()
             if (std::abs (diff) <= 0.5 || verifyRound >= kMaxVerifyRounds || (atMax && diff > 0))
             {
                 phase = Phase::Idle;
-                juce::String s = juce::String::fromUTF8 ("Fertig! Gemessen ") + juce::String (l, 1) + " LUFS (Ziel "
-                               + juce::String (getTargetLufs(), 0) + juce::String::fromUTF8 ("), Schärfe-Schutz bei ")
-                               + eqparams::formatHz (dhFreq->load()) + ".";
+                juce::String s = refMode.load()
+                    ? juce::String::fromUTF8 ("Fertig! Klang und Lautstärke an „") + referenceName
+                      + juce::String::fromUTF8 ("“ angeglichen (") + juce::String (l, 1) + " LUFS, Referenz "
+                      + juce::String (referenceLufs, 1) + " LUFS)."
+                    : juce::String::fromUTF8 ("Fertig! Gemessen ") + juce::String (l, 1) + " LUFS (Ziel "
+                      + juce::String (getTargetLufs(), 0) + juce::String::fromUTF8 ("), Schärfe-Schutz bei ")
+                      + eqparams::formatHz (dhFreq->load()) + ".";
                 if (std::abs (diff) > 0.5)
                     s << juce::String::fromUTF8 (" Ziel nicht ganz erreicht, der Mix lässt sich ohne Verzerrung kaum lauter machen.");
                 else if (avgLim > 4.0)
@@ -432,6 +468,79 @@ void MasterProcessor::resetAll()
     statusText = juce::String::fromUTF8 ("Zurückgesetzt. Drücke LERNEN, um neu einzustellen.");
 }
 
+bool MasterProcessor::loadReference (const juce::File& file)
+{
+    juce::AudioFormatManager fm;
+    fm.registerBasicFormats();
+    std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (file));
+    if (reader == nullptr)
+    {
+        statusText = juce::String::fromUTF8 ("Konnte die Datei nicht lesen. Bitte eine WAV-, AIFF- oder FLAC-Datei wählen.");
+        return false;
+    }
+
+    auto spectrum = SpectrumAnalyzer::analyzeFile (*reader);
+
+    // Integrierte Lautheit nach BS.1770 (100-ms-Frames, K-gewichtet, gegated)
+    double lufs = -100.0;
+    {
+        const double fs = reader->sampleRate;
+        const int numCh = juce::jlimit (1, 2, (int) reader->numChannels);
+        KWeighting k; k.prepare (fs);
+        KWeightedChannel ch[2]; ch[0].setup (k); ch[1].setup (k);
+        const int frame = juce::jmax (1, (int) (fs * 0.1));
+        juce::AudioBuffer<float> buf (numCh, frame);
+        std::vector<double> frames;
+        for (juce::int64 pos = 0; pos + frame <= reader->lengthInSamples; pos += frame)
+        {
+            reader->read (&buf, 0, frame, pos, true, numCh > 1);
+            double ms = 0.0;
+            for (int c = 0; c < numCh; ++c)
+                for (int i = 0; i < frame; ++i)
+                {
+                    const float y = ch[c].process (buf.getSample (c, i));
+                    ms += (double) y * y;
+                }
+            frames.push_back (ms / frame);
+        }
+        // Lautester 20-s-Abschnitt (beim Lernen spielt man ja auch den lauten Teil)
+        if (frames.size() <= 200)
+            lufs = gatedLoudness (frames);
+        else
+            for (size_t st = 0; st + 200 <= frames.size(); st += 10)
+                lufs = std::max (lufs, gatedLoudness (std::vector<double> (frames.begin() + (long) st, frames.begin() + (long) st + 200)));
+    }
+
+    if (spectrum.empty() || lufs < -60.0)
+    {
+        statusText = juce::String::fromUTF8 ("In der Datei ist kaum etwas Hörbares. Bitte eine andere Version wählen.");
+        return false;
+    }
+
+    {
+        const juce::ScopedLock sl (learnedLock);
+        referenceDb = std::move (spectrum);
+    }
+    referenceLufs = lufs;
+    referenceName = file.getFileNameWithoutExtension();
+    refMode = true;
+    statusText = juce::String::fromUTF8 ("Referenz „") + referenceName + "“ geladen (" + juce::String (lufs, 1)
+               + juce::String::fromUTF8 (" LUFS). Jetzt deinen Song abspielen und LERNEN drücken.");
+    return true;
+}
+
+void MasterProcessor::clearReference()
+{
+    {
+        const juce::ScopedLock sl (learnedLock);
+        referenceDb.clear();
+    }
+    referenceName.clear();
+    referenceLufs = -100.0;
+    refMode = false;
+    statusText = juce::String::fromUTF8 ("Referenz entfernt. Automatik-Modus: LERNEN drücken.");
+}
+
 bool MasterProcessor::hasLearnedSpectrum() const
 {
     const juce::ScopedLock sl (learnedLock);
@@ -453,18 +562,34 @@ std::vector<double> MasterProcessor::getAlignedTarget() const
 void MasterProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     const juce::ScopedLock sl (learnedLock);
-    statehelpers::save (*this, apvts, destData, learnedDb, alignedTargetDb);
+    auto state = apvts.copyState();
+    auto node = state.getOrCreateChildWithName ("Learned", nullptr);
+    node.setProperty ("spectrum", statehelpers::joinDoubles (learnedDb), nullptr);
+    node.setProperty ("target", statehelpers::joinDoubles (alignedTargetDb), nullptr);
+    node.setProperty ("reference", statehelpers::joinDoubles (referenceDb), nullptr);
+    node.setProperty ("referenceName", referenceName, nullptr);
+    node.setProperty ("referenceLufs", referenceLufs, nullptr);
+    if (auto xml = state.createXml())
+        copyXmlToBinary (*xml, destData);
 }
 
 void MasterProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
-    std::vector<double> l, t;
-    if (statehelpers::load (*this, apvts, data, sizeInBytes, l, t))
+    auto xml = getXmlFromBinary (data, sizeInBytes);
+    if (xml == nullptr || ! xml->hasTagName (apvts.state.getType()))
+        return;
+    auto tree = juce::ValueTree::fromXml (*xml);
+    auto node = tree.getChildWithName ("Learned");
     {
         const juce::ScopedLock sl (learnedLock);
-        learnedDb = std::move (l);
-        alignedTargetDb = std::move (t);
+        learnedDb = statehelpers::parseDoubles (node.getProperty ("spectrum").toString());
+        alignedTargetDb = statehelpers::parseDoubles (node.getProperty ("target").toString());
+        referenceDb = statehelpers::parseDoubles (node.getProperty ("reference").toString());
+        refMode = ! referenceDb.empty();
     }
+    referenceName = node.getProperty ("referenceName").toString();
+    referenceLufs = (double) node.getProperty ("referenceLufs", -100.0);
+    apvts.replaceState (tree);
 }
 
 juce::AudioProcessorEditor* MasterProcessor::createEditor()

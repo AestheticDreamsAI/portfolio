@@ -9,6 +9,7 @@
 //  6. Gains per Least-Squares nachjustieren, unwirksame Baender abschalten
 //  7. Ausgangspegel grob (A-gewichtet) kompensieren
 #include "AutoEqFitter.h"
+#include "Dynamics.h"
 
 #include <algorithm>
 #include <cmath>
@@ -402,6 +403,52 @@ FitResult fitEq (const ModeProfile& profile, const std::vector<double>& measured
     }
 
     return result;
+}
+
+ModeProfile makeReferenceProfile (const std::vector<double>& referenceDb)
+{
+    ModeProfile p;
+    p.name = "Eigene Referenz";
+    const auto sm = smoothDb (referenceDb, 4);
+    // Stuetzpunkte alle 1/6 Oktave
+    for (int i = 0; i < AnalysisGrid::kNumBands; i += 4)
+    {
+        const double f = AnalysisGrid::centerHz (i);
+        if (f >= 22.0 && f <= 19000.0 && sm[(size_t) i] > -150.0)
+            p.target.emplace_back (f, sm[(size_t) i]);
+    }
+    if (p.target.size() < 2)
+        p.target = { { 20.0, 0.0 }, { 20000.0, 0.0 } };
+
+    p.hpfFreq = 20.0;     // praktisch neutral
+    p.lpfFreq = 0.0;      // kein High-Cut
+    p.focusLo = 30.0;
+    p.focusHi = 16000.0;
+    p.resLo = 0.0;        // keine Resonanz-Notches: die Referenz ist derselbe Song
+    p.resHi = 0.0;
+    p.lowShelfFreq = 90.0;
+    p.highShelfFreq = 9000.0;
+    p.maxBoostDb = 6.0;   // zum Angleichen darf er auch anheben
+    p.maxCutDb = -8.0;
+    return p;
+}
+
+double approxLoudnessDb (const std::vector<double>& bandDb, const EqSettings* eq, double amount, double sampleRate)
+{
+    KWeighting kw;
+    kw.prepare (sampleRate);
+    double sum = 0.0;
+    for (int i = 0; i < (int) bandDb.size() && i < AnalysisGrid::kNumBands; ++i)
+    {
+        const double f = AnalysisGrid::centerHz (i);
+        if (f >= sampleRate * 0.5)
+            break;
+        double db = bandDb[(size_t) i] + kw.shelf.magnitudeDb (f, sampleRate) + kw.highpass.magnitudeDb (f, sampleRate);
+        if (eq != nullptr)
+            db += eqResponseDb (*eq, amount, f, sampleRate);
+        sum += std::pow (10.0, db / 10.0);
+    }
+    return 10.0 * std::log10 (sum + 1.0e-30);
 }
 
 } // namespace ironcurve

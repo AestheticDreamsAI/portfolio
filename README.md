@@ -152,6 +152,13 @@ stellt sich in ca. 20 Sekunden Musik selbst ein.
 Lässt sich ein Mix nicht ohne Verzerrung so laut machen, sagt das Plugin das
 ehrlich, statt zu übersteuern.
 
+**Referenz-Modus, empfohlen:** Über **REFERENZ LADEN …** wählst du eine
+Version deines Songs, die dir gefällt. Danach drückst du LERNEN. Ironcurve Master
+gleicht dann Klang und Lautstärke deines aktuellen Mixes an diese Version an,
+live in FL Studio. In diesem Modus arbeiten nur EQ, Lautstärke und Limiter.
+Kompressor, Schärfe-Schutz und Mono-Bass bleiben aus, damit dein Sound erhalten
+bleibt. Die Referenz wird im FL-Projekt gespeichert.
+
 **Einsatz in FL Studio:** Lade das Plugin in den **Master**-Kanal, als letztes
 Plugin oder anstelle eines vorhandenen Limiters. Es bringt seinen eigenen
 Limiter mit. FL gleicht die Latenz von ca. 5 ms automatisch aus.

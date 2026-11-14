@@ -42,7 +42,9 @@ private:
     juce::TooltipWindow tooltips { this, 600 };
 
     juce::ComboBox targetBox;
-    juce::TextButton learnButton, resetButton;
+    juce::TextButton learnButton, resetButton, referenceButton;
+    std::unique_ptr<juce::FileChooser> chooser;
+    void chooseReference();
     juce::ToggleButton monoButton { "Mono-Bass" };
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> targetAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> monoAttachment;

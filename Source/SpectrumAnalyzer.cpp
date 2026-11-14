@@ -232,3 +232,87 @@ float SpectrumAnalyzer::getLearnProgress() const noexcept
     const double secs = learnFrames * (double) hopSize / currentRate.load();
     return (float) juce::jlimit (0.0, 1.0, secs / learnSeconds);
 }
+
+std::vector<double> SpectrumAnalyzer::analyzeFile (juce::AudioFormatReader& reader)
+{
+    const double fs = reader.sampleRate;
+    const int numCh = juce::jlimit (1, 2, (int) reader.numChannels);
+    const juce::int64 total = reader.lengthInSamples;
+    if (fs <= 0.0 || total < fftSize)
+        return {};
+
+    juce::dsp::FFT fftLocal (fftOrder);
+    std::vector<float> win ((size_t) fftSize), hist ((size_t) fftSize, 0.0f), data ((size_t) fftSize * 2);
+    double sumW = 0.0;
+    for (int i = 0; i < fftSize; ++i)
+    {
+        win[(size_t) i] = 0.5f - 0.5f * std::cos (2.0f * juce::MathConstants<float>::pi * (float) i / (float) fftSize);
+        sumW += win[(size_t) i];
+    }
+    const double norm = 4.0 / (sumW * sumW) / 1.5;
+    const double binHz = fs / fftSize;
+
+    std::vector<double> acc ((size_t) AnalysisGrid::kNumBands, 0.0), binPow ((size_t) fftSize / 2 + 1);
+    int frames = 0;
+
+    juce::AudioBuffer<float> chunk (numCh, hopSize);
+    for (juce::int64 pos = 0; pos + hopSize <= total; pos += hopSize)
+    {
+        reader.read (&chunk, 0, hopSize, pos, true, numCh > 1);
+        std::move (hist.begin() + hopSize, hist.end(), hist.begin());
+        for (int i = 0; i < hopSize; ++i)
+        {
+            float m = 0.0f;
+            for (int ch = 0; ch < numCh; ++ch)
+                m += chunk.getSample (ch, i);
+            hist[(size_t) (fftSize - hopSize + i)] = m / (float) numCh;
+        }
+        if (pos + hopSize < fftSize)
+            continue; // Fenster noch nicht voll
+
+        double sumSq = 0.0;
+        for (int i = 0; i < fftSize; ++i)
+        {
+            sumSq += (double) hist[(size_t) i] * hist[(size_t) i];
+            data[(size_t) i] = hist[(size_t) i] * win[(size_t) i];
+        }
+        if (10.0 * std::log10 (sumSq / fftSize + 1.0e-20) <= -50.0)
+            continue; // Stille zaehlt nicht
+
+        std::fill (data.begin() + fftSize, data.end(), 0.0f);
+        fftLocal.performFrequencyOnlyForwardTransform (data.data(), true);
+        for (int k = 0; k <= fftSize / 2; ++k)
+            binPow[(size_t) k] = (double) data[(size_t) k] * data[(size_t) k] * norm;
+
+        for (int b = 0; b < AnalysisGrid::kNumBands; ++b)
+        {
+            const double lo = AnalysisGrid::lowerHz (b), hi = AnalysisGrid::upperHz (b);
+            if (hi >= fs * 0.5) { acc[(size_t) b] += 1.0e-20; continue; }
+            const int k0 = (int) std::ceil (lo / binHz), k1 = std::min ((int) std::floor (hi / binHz), fftSize / 2);
+            double density;
+            if (k1 >= k0)
+            {
+                double sum = 0.0;
+                for (int k = k0; k <= k1; ++k) sum += binPow[(size_t) k];
+                density = sum / (k1 - k0 + 1);
+            }
+            else
+            {
+                const double c = AnalysisGrid::centerHz (b) / binHz;
+                const int kk = juce::jlimit (0, fftSize / 2 - 1, (int) std::floor (c));
+                const double a = juce::jlimit (0.0, 1.0, c - kk);
+                density = binPow[(size_t) kk] * (1.0 - a) + binPow[(size_t) (kk + 1)] * a;
+            }
+            acc[(size_t) b] += density * (hi - lo) / binHz + 1.0e-20;
+        }
+        ++frames;
+    }
+
+    if (frames < 10)
+        return {};
+
+    std::vector<double> out ((size_t) AnalysisGrid::kNumBands);
+    for (int b = 0; b < AnalysisGrid::kNumBands; ++b)
+        out[(size_t) b] = 10.0 * std::log10 (acc[(size_t) b] / frames + 1.0e-20);
+    return out;
+}

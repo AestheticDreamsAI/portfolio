@@ -33,7 +33,7 @@ void MeterPanel::paint (juce::Graphics& g)
     g.drawText (valid ? juce::String (heldLufs, 1) : juce::String::fromUTF8 ("–"), r.removeFromTop (42.0f), juce::Justification::centredLeft);
     g.setColour (Colours_::dimText);
     g.setFont (font (12.0f));
-    g.drawText ("LUFS   Ziel " + juce::String (tgt, 0), r.removeFromTop (16.0f), juce::Justification::centredLeft);
+    g.drawText ("LUFS   Ziel " + juce::String (tgt, 1), r.removeFromTop (16.0f), juce::Justification::centredLeft);
 
     r.removeFromTop (18.0f);
 
@@ -80,6 +80,24 @@ MasterEditor::MasterEditor (MasterProcessor& p)
     learnButton.onClick = [this] { if (proc.isLearning()) proc.cancelLearning(); else proc.startLearning(); };
     addAndMakeVisible (learnButton);
 
+    referenceButton.setButtonText (juce::String::fromUTF8 ("REFERENZ LADEN …"));
+    referenceButton.setTooltip (juce::String::fromUTF8 ("Eine Version wählen, die dir gefällt: der Master gleicht deinen Song daran an"));
+    referenceButton.setColour (juce::TextButton::buttonColourId, Colours_::panel);
+    referenceButton.onClick = [this]
+    {
+        if (! proc.isReferenceMode())
+        {
+            chooseReference();
+            return;
+        }
+        juce::PopupMenu m;
+        m.addItem (1, juce::String::fromUTF8 ("Andere Referenz laden …"));
+        m.addItem (2, juce::String::fromUTF8 ("Referenz entfernen (Automatik-Modus)"));
+        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&referenceButton),
+                         [this] (int r) { if (r == 1) chooseReference(); else if (r == 2) proc.clearReference(); });
+    };
+    addAndMakeVisible (referenceButton);
+
     resetButton.setButtonText ("RESET");
     resetButton.setColour (juce::TextButton::buttonColourId, Colours_::panel);
     resetButton.onClick = [this] { proc.resetAll(); };
@@ -112,6 +130,20 @@ MasterEditor::~MasterEditor()
 {
     stopTimer();
     setLookAndFeel (nullptr);
+}
+
+void MasterEditor::chooseReference()
+{
+    chooser = std::make_unique<juce::FileChooser> (juce::String::fromUTF8 ("Referenz wählen (eine Version, die dir gefällt)"),
+                                                   juce::File::getSpecialLocation (juce::File::userMusicDirectory),
+                                                   "*.wav;*.aif;*.aiff;*.flac;*.ogg");
+    chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                          [this] (const juce::FileChooser& fc)
+                          {
+                              const auto f = fc.getResult();
+                              if (f.existsAsFile())
+                                  proc.loadReference (f);
+                          });
 }
 
 void MasterEditor::setupKnob (Knob& k, const juce::String& paramId, const juce::String& text, const juce::String& tooltip)
@@ -147,6 +179,7 @@ void MasterEditor::resized()
     targetBox.setBounds (380, 26, 200, 30);
     learnButton.setBounds (594, 20, 200, 42);
     resetButton.setBounds (806, 26, 70, 30);
+    referenceButton.setBounds (886, 26, 184, 30);
 
     const int top = 76, bottom = getHeight() - 40, knobRowH = 110;
     meters.setBounds (getWidth() - 260, top, 250, bottom - top - knobRowH - 8);
@@ -182,6 +215,18 @@ void MasterEditor::timerCallback()
             info = juce::String::fromUTF8 ("Warte auf Signal … starte die Wiedergabe in FL Studio.");
     }
     statusLabel.setText (info, juce::dontSendNotification);
+
+    // Referenz-Modus: nur EQ, Lautheit und Limiter sind aktiv
+    const bool ref = proc.isReferenceMode();
+    referenceButton.setButtonText (ref ? juce::String::fromUTF8 ("REF: ") + proc.getReferenceName()
+                                       : juce::String::fromUTF8 ("REFERENZ LADEN …"));
+    referenceButton.setColour (juce::TextButton::buttonColourId, ref ? Colours_::result.darker (0.6f) : Colours_::panel);
+    for (juce::Component* c : { (juce::Component*) &targetBox, (juce::Component*) &deharshKnob.slider, (juce::Component*) &widthKnob.slider,
+                                (juce::Component*) &monoKnob.slider, (juce::Component*) &glueKnob.slider, (juce::Component*) &monoButton })
+    {
+        c->setEnabled (! ref);
+        c->setAlpha (ref ? 0.35f : 1.0f);
+    }
 
     meters.update();
     display.repaint();

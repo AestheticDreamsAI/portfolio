@@ -180,6 +180,45 @@ int main()
         CHECK (! anyBell, "Keine Boosts aus dem Nichts");
     }
 
+    // --- Test 5: Referenz-Abgleich -------------------------------------------
+    {
+        std::printf ("Test 5: Angleich an eine eigene Referenz\n");
+        std::vector<double> ref ((size_t) n), cur ((size_t) n);
+        for (int i = 0; i < n; ++i)
+        {
+            const double f = AnalysisGrid::centerHz (i);
+            ref[(size_t) i] = targetDbAt (profiles[7], f) - 25.0 + gaussLog (f, 60.0, 0.6, 3.0);          // satter Bass
+            cur[(size_t) i] = ref[(size_t) i] - 6.0 - gaussLog (f, 60.0, 0.6, 3.0) + gaussLog (f, 1000.0, 0.5, 2.5) // weniger Bass, boxiger
+                            - gaussLog (f, 10000.0, 0.8, 3.0) + noise (rng) * 0.5;
+        }
+        const auto prof = makeReferenceProfile (ref);
+        const auto r = fitEq (prof, cur, fs);
+        printEq (r);
+        double maxErr = 0.0;
+        const auto sc = smoothDb (cur, 4), sr = smoothDb (ref, 4);
+        double off = 0.0; int c = 0;
+        std::vector<double> d ((size_t) n);
+        for (int i = 0; i < n; ++i)
+        {
+            const double f = AnalysisGrid::centerHz (i);
+            d[(size_t) i] = sc[(size_t) i] + eqResponseDb (r.eq, 1.0, f, fs) - sr[(size_t) i];
+            if (f > 40 && f < 14000) { off += d[(size_t) i]; ++c; }
+        }
+        off /= c;
+        for (int i = 0; i < n; ++i)
+        {
+            const double f = AnalysisGrid::centerHz (i);
+            if (f > 40 && f < 14000) maxErr = std::max (maxErr, std::abs (d[(size_t) i] - off));
+        }
+        std::printf ("    max. Restabweichung zur Referenz: %.2f dB\n", maxErr);
+        CHECK (maxErr < 1.5, "Klangbalance wird an die Referenz angeglichen");
+
+        const double lRef = approxLoudnessDb (ref, nullptr, 1.0, fs);
+        const double lCur = approxLoudnessDb (cur, &r.eq, 1.0, fs);
+        std::printf ("    Lautheitsdifferenz nach EQ: %.2f dB (wird per Ausgang ausgeglichen)\n", lRef - lCur);
+        CHECK (std::abs ((lRef - lCur) - 6.0) < 2.5, "Lautheitsdifferenz plausibel erkannt (ca. 6 dB leiser)");
+    }
+
     std::printf (failures == 0 ? "\nAlle Tests bestanden.\n" : "\n%d Test(s) fehlgeschlagen.\n", failures);
     return failures == 0 ? 0 : 1;
 }

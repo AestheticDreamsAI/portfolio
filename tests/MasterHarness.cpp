@@ -10,7 +10,7 @@ int main (int argc, char** argv)
 {
     if (argc < 4)
     {
-        std::printf ("usage: MasterHarness in.wav out.wav targetIndex [shot.png]\n");
+        std::printf ("usage: MasterHarness in.wav out.wav targetIndex [shot.png] [reference.wav]\n");
         return 2;
     }
 
@@ -52,6 +52,11 @@ int main (int argc, char** argv)
     juce::AudioBuffer<float> buf (2, block);
     juce::MidiBuffer midi;
     int pos = 0;
+    if (argc > 5)
+    {
+        const bool ok = proc.loadReference (juce::File (juce::String (argv[5])));
+        std::printf ("Referenz: %s (%s)\n", ok ? "geladen" : "FEHLER", proc.getStatusText().toRawUTF8());
+    }
     proc.startLearning();
     int iter = 0;
     while (proc.isLearning() && iter < 3000)

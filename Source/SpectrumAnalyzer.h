@@ -5,6 +5,7 @@
 #pragma once
 
 #include <juce_audio_basics/juce_audio_basics.h>
+#include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_dsp/juce_dsp.h>
 #include <juce_events/juce_events.h>
 
@@ -38,6 +39,10 @@ public:
     const std::vector<float>& getDisplayDb() const noexcept { return displayDb; }
 
     std::function<void (std::vector<double>)> onLearnFinished;
+
+    // Analysiert eine komplette Audiodatei mit derselben Methode wie das Live-Lernen
+    // (Leistungsmittel aller Frames ueber -50 dBFS). Leer, wenn nichts Hoerbares drin ist.
+    static std::vector<double> analyzeFile (juce::AudioFormatReader& reader);
 
 private:
     void timerCallback() override;

@@ -61,6 +61,12 @@ public:
     static const std::array<float, 4> targetLufs;
     float getTargetLufs() const;
 
+    // ---- Referenz-Modus: an eine eigene Version angleichen (nur EQ + Lautheit + Limiter) ----
+    bool loadReference (const juce::File& file);   // Message-Thread
+    void clearReference();
+    bool isReferenceMode() const { return refMode.load(); }
+    juce::String getReferenceName() const { return referenceName; }
+
     // ---- Meter (Message-Thread) ----
     struct Meters { float shortTermLufs = -100.0f, deharshGr = 0, compGr = 0, limitGr = 0; };
     Meters getMeters() const { return meters; }
@@ -118,7 +124,10 @@ private:
     juce::String statusText;
 
     mutable juce::CriticalSection learnedLock;
-    std::vector<double> learnedDb, alignedTargetDb;
+    std::vector<double> learnedDb, alignedTargetDb, referenceDb;
+    double referenceLufs = -100.0;
+    juce::String referenceName;
+    std::atomic<bool> refMode { false };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MasterProcessor)
 };

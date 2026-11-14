@@ -30,6 +30,13 @@ struct FitResult
 // measuredDb: Leistung pro Analyseband in dB (pink-flach, Laenge AnalysisGrid::kNumBands)
 FitResult fitEq (const ModeProfile& profile, const std::vector<double>& measuredDb, double sampleRate);
 
+// Zielkurve aus einem Referenz-Spektrum (z. B. eigene fruehere Version) bauen
+ModeProfile makeReferenceProfile (const std::vector<double>& referenceDb);
+
+// Grobe Lautheit (K-gewichtet) aus Bandleistungen; optional mit EQ davor.
+// Fuer Vergleiche zwischen zwei Spektren gedacht (gleiche Methode auf beiden Seiten).
+double approxLoudnessDb (const std::vector<double>& bandDb, const EqSettings* eq, double amount, double sampleRate);
+
 // Hilfsfunktion: gleitender Mittelwert ueber +-halfWidth Baender (in dB)
 std::vector<double> smoothDb (const std::vector<double>& in, int halfWidth);
 
