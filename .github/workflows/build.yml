@@ -64,3 +64,23 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: artifacts/*.zip
+
+  # Fertige Dateien zusaetzlich als Git-Branch ablegen (Download ohne Login-Artefakte)
+  dist-branch:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: In Branch ironcurve-dist pushen
+        run: |
+          cd artifacts
+          for d in */; do (cd "$d" && zip -qr "../${d%/}.zip" .); done
+          mkdir ../out && mv *.zip ../out/ && cd ../out
+          git init -q -b ironcurve-dist
+          git -c user.name=ci -c user.email=ci@example.com add -A
+          git -c user.name=ci -c user.email=ci@example.com commit -q -m "Build ${GITHUB_SHA}"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${GITHUB_REPOSITORY}.git" ironcurve-dist
