@@ -32,6 +32,9 @@ if(IRONCURVE_BUILD_TESTS)
     add_executable(clarity_tests tests/test_clarity.cpp)
     target_link_libraries(clarity_tests PRIVATE ironcurve_core)
     add_test(NAME clarity_tests COMMAND clarity_tests)
+    add_executable(amp_tests tests/test_amp.cpp)
+    target_link_libraries(amp_tests PRIVATE ironcurve_core)
+    add_test(NAME amp_tests COMMAND amp_tests)
 endif()
 
 # --- Plugin -------------------------------------------------------------------
@@ -127,6 +130,45 @@ if(IRONCURVE_BUILD_PLUGIN)
             juce::juce_recommended_lto_flags
             juce::juce_recommended_warning_flags)
 
+    # --- Ironcurve Amp (drittes Plugin) -------------------------------------------
+    juce_add_plugin(IroncurveAmp
+        COMPANY_NAME "Ironcurve"
+        PRODUCT_NAME "Ironcurve Amp"
+        PLUGIN_MANUFACTURER_CODE Ircv
+        PLUGIN_CODE IcAm
+        FORMATS VST3 Standalone
+        IS_SYNTH FALSE
+        NEEDS_MIDI_INPUT FALSE
+        NEEDS_MIDI_OUTPUT FALSE
+        IS_MIDI_EFFECT FALSE
+        EDITOR_WANTS_KEYBOARD_FOCUS FALSE
+        COPY_PLUGIN_AFTER_BUILD FALSE
+        VST3_CATEGORIES Fx Distortion)
+
+    target_sources(IroncurveAmp PRIVATE
+        Source/Amp/AmpProcessor.cpp
+        Source/Amp/AmpEditor.cpp
+        ${IRONCURVE_SHARED_SOURCES})
+
+    target_compile_definitions(IroncurveAmp PUBLIC
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_VST3_CAN_REPLACE_VST2=0)
+
+    if(MSVC)
+        target_compile_options(IroncurveAmp PRIVATE /utf-8)
+    endif()
+
+    target_link_libraries(IroncurveAmp
+        PRIVATE
+            ironcurve_core
+            juce::juce_audio_utils
+            juce::juce_dsp
+        PUBLIC
+            juce::juce_recommended_config_flags
+            juce::juce_recommended_lto_flags
+            juce::juce_recommended_warning_flags)
+
     # Optionaler End-to-End-Test (Lernen mit synthetischem Signal + Screenshot)
     option(IRONCURVE_BUILD_HARNESS "End-to-End-Testprogramm bauen" OFF)
     if(IRONCURVE_BUILD_HARNESS)
@@ -149,12 +191,24 @@ if(IRONCURVE_BUILD_PLUGIN)
             Source/PluginEditor.cpp
             Source/Master/MasterProcessor.cpp
             Source/Master/MasterEditor.cpp
+            Source/Amp/AmpProcessor.cpp
+            Source/Amp/AmpEditor.cpp
             ${IRONCURVE_SHARED_SOURCES})
         target_compile_definitions(StressHarness PRIVATE
             JucePlugin_Name="Ironcurve Auto EQ" IRONCURVE_NO_PLUGIN_ENTRY=1
             JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_MODAL_LOOPS_PERMITTED=1)
         target_link_libraries(StressHarness PRIVATE
             ironcurve_core juce::juce_audio_utils juce::juce_dsp juce::juce_recommended_config_flags)
+
+        juce_add_console_app(AmpShot PRODUCT_NAME "AmpShot")
+        target_sources(AmpShot PRIVATE tests/AmpShot.cpp Source/Amp/AmpProcessor.cpp Source/Amp/AmpEditor.cpp ${IRONCURVE_SHARED_SOURCES})
+        target_compile_definitions(AmpShot PRIVATE IRONCURVE_NO_PLUGIN_ENTRY=1 JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_MODAL_LOOPS_PERMITTED=1)
+        target_link_libraries(AmpShot PRIVATE ironcurve_core juce::juce_audio_utils juce::juce_dsp juce::juce_recommended_config_flags)
+
+        juce_add_console_app(AmpRender PRODUCT_NAME "AmpRender")
+        target_sources(AmpRender PRIVATE tests/AmpRender.cpp Source/Amp/AmpProcessor.cpp Source/Amp/AmpEditor.cpp ${IRONCURVE_SHARED_SOURCES})
+        target_compile_definitions(AmpRender PRIVATE IRONCURVE_NO_PLUGIN_ENTRY=1 JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+        target_link_libraries(AmpRender PRIVATE ironcurve_core juce::juce_audio_utils juce::juce_dsp juce::juce_recommended_config_flags)
 
         juce_add_console_app(MasterHarness PRODUCT_NAME "MasterHarness")
         target_sources(MasterHarness PRIVATE

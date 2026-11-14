@@ -2,6 +2,7 @@
 // waehrend der Message-Thread den Editor oeffnet. Der Message-Thread muss reaktionsfaehig bleiben.
 #include "../Source/PluginProcessor.h"
 #include "../Source/Master/MasterProcessor.h"
+#include "../Source/Amp/AmpProcessor.h"
 
 #include <thread>
 
@@ -58,6 +59,7 @@ int main()
     juce::ScopedJuceInitialiser_GUI init;
     const bool a = stress<IroncurveProcessor> ("Ironcurve Auto EQ");
     const bool b = stress<MasterProcessor> ("Ironcurve Master");
-    std::printf (a && b ? "Stresstest: OK\n" : "Stresstest: FEHLER (Oberflaeche friert ein)\n");
-    return a && b ? 0 : 1;
+    const bool c = stress<AmpProcessor> ("Ironcurve Amp");
+    std::printf (a && b && c ? "Stresstest: OK\n" : "Stresstest: FEHLER (Oberflaeche friert ein)\n");
+    return a && b && c ? 0 : 1;
 }
