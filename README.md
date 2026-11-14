@@ -10,7 +10,10 @@ für die jeweilige Spur und setzt danach feste, frei editierbare EQ-Bänder.
 
 1. Das Plugin in einen Mixer-Insert laden, z. B. auf die Rhythmus-Gitarren.
 2. Oben den passenden **Modus** wählen: Rhythmus-Gitarre, Lead-Gitarre, Bass,
-   Kick, Snare, Overheads, Vocals oder Mix-Bus.
+   Kick, Snare, Overheads, Vocals, Mix-Bus, Pads / Synths, Strings / Orchester,
+   Clean-Gitarre, Ambient-Gitarre, Piano / Keys, Toms, 808 / Sub-Drop,
+   Gang-Vocals / Chor oder Samples / FX. Pads und Strings halten dabei bewusst
+   die Gitarren-Mitten (1–3 kHz) frei.
 3. Den **lautesten, typischsten Part** abspielen, z. B. den Refrain-Riff.
 4. **LERNEN** drücken. Nach 8 Sekunden echtem Signal setzt der EQ die Bänder
    selbst. Stille und sehr leise Stellen (unter -50 dBFS) zählen nicht mit,
