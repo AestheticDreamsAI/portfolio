@@ -180,6 +180,10 @@ private:
         bandAth.assign ((size_t) numBands, 0.0);
         bandCount.assign ((size_t) numBands, 0);
         bandKWeight.assign ((size_t) numBands, 1.0);
+        bandPresence.assign ((size_t) numBands, 1.0);
+        bandCompDb.assign ((size_t) numBands, 0.0);
+        bandCompTarget.assign ((size_t) numBands, 0.0);
+        bandTotal.assign ((size_t) numBands, 0.0);
 
         for (int k = 1; k <= kFftSize / 2; ++k)
         {
@@ -204,6 +208,14 @@ private:
                 (hzToBark (mid) < bandZ[(size_t) b] ? lo : hi) = mid;
             }
             bandAth[(size_t) b] = athDb (0.5 * (lo + hi));
+            {
+                const double z = bandZ[(size_t) b];  // 1 kHz ~ 8,5 Bark, 5 kHz ~ 18,5 Bark
+                // Recover-Gewicht: im Bass zurueckhaltend (dort waere "Hervorholen" eher Dröhnen),
+                // ab ca. 1 kHz bis in die Hoehen voll (Praesenz UND Luft)
+                double w = 1.0;
+                if (z < 8.0) w = 0.4 + 0.6 * std::clamp ((z - 3.0) / 5.0, 0.0, 1.0);
+                bandPresence[(size_t) b] = w;
+            }
             const double fc = 0.5 * (lo + hi);
             KWeighting kw; kw.prepare (fs);
             bandKWeight[(size_t) b] = std::pow (10.0, (kw.shelf.magnitudeDb (fc, fs) + kw.highpass.magnitudeDb (fc, fs)) / 10.0);
@@ -225,6 +237,7 @@ private:
         scratchLvl.assign ((size_t) numBands, 0.0);
         scratchTarget.assign ((size_t) numBands, 0.0);
         scratchRec.assign ((size_t) numBands, 0.0);
+        scratchU.assign ((size_t) numBands, 0.0);
         binGain.assign ((size_t) kFftSize / 2 + 1, 1.0);
     }
 
@@ -249,6 +262,8 @@ private:
         {
             std::fill (binGain.begin(), binGain.end(), 1.0);
             std::fill (bandGainDb.begin(), bandGainDb.end(), 0.0);
+            std::fill (bandCompDb.begin(), bandCompDb.end(), 0.0);
+            std::fill (bandTotal.begin(), bandTotal.end(), 0.0);
             loudComp = 0.0;
             lastRecover = lastTame = 0.0;
         }
@@ -303,7 +318,12 @@ private:
 
         if (nBins == 0 || linSum < 1.0e-14) // praktisch Stille: nichts tun, sanft zurueck auf 0
         {
-            for (auto& g : bandGainDb) g *= gainCoef;
+            for (int b = 0; b < numBands; ++b)
+            {
+                bandGainDb[(size_t) b] *= gainCoef;
+                bandCompDb[(size_t) b] *= compCoef;
+                bandTotal[(size_t) b] = bandGainDb[(size_t) b] - bandCompDb[(size_t) b];
+            }
             applyBandGains();
             return;
         }
@@ -340,8 +360,10 @@ private:
             for (int j = i + 1; j <= std::min (numBands - 1, i + 3); ++j) { right += lvl[(size_t) j]; ++nr; }
             const double excess = (nl > 0 && nr > 0) ? lvl[(size_t) i] - std::max (left / nl, right / nr) : 0.0;
             const double audible = lvl[(size_t) i] - bandAth[(size_t) i];
-            tameDb[(size_t) i] = (excess > 4.0 && audible > 20.0)
-                               ? -std::min (amount * 0.6 * (excess - 4.0), 8.0 * amount) : 0.0;
+            // In den Praesenz-Mitten (ca. 1-5 kHz, 8-18,5 Bark) nur deutliche Resonanzen zaehmen
+            const double tameThr = (bandZ[(size_t) i] >= 8.0 && bandZ[(size_t) i] <= 18.5) ? 6.0 : 4.0;
+            tameDb[(size_t) i] = (excess > tameThr && audible > 20.0)
+                               ? -std::min (amount * 0.6 * (excess - tameThr), 8.0 * amount) : 0.0;
         }
 
         // 3. RECOVER danach: Mithoerschwelle aus den bereits GEZAEHMTEN Pegeln (Johnston-Abstand,
@@ -371,7 +393,7 @@ private:
             const double extraMasked = smrFlat - smr;   // > 0: staerker verdeckt als normal
             const double audible = lvl[(size_t) i] - bandAth[(size_t) i];
             recDb[(size_t) i] = (audible > 15.0 && tameDb[(size_t) i] == 0.0 && extraMasked > 0.5)
-                              ? std::min (amount * 0.75 * std::clamp (extraMasked - 0.5, 0.0, 12.0), 6.0 * amount) : 0.0;
+                              ? std::min (amount * 0.75 * bandPresence[(size_t) i] * std::clamp (extraMasked - 0.5, 0.0, 12.0), 6.0 * amount) : 0.0;
         }
 
         // 4. Recover ueber Frequenz glaetten (1-2-1), Tame nicht; dann ueber Zeit
@@ -388,17 +410,65 @@ private:
         lastRecover = recSum / numBands;
         lastTame = tameSum / numBands;
 
-        // 5. Lautheits-Ausgleich nach BS.1770 (K-gewichtete Energie): die gemessene Lautheit (LUFS)
-        //    bleibt gleich, egal wie stark Klarheit eingestellt ist -> passt zum Limiter dahinter
-        double eBefore = 0.0, eAfter = 0.0;
+        // 5. Lautheits-Ausgleich nach BS.1770 (K-gewichtete Energie), aber NICHT pauschal:
+        //    Die zusaetzliche Energie wird aus den Baendern genommen, die deutlich lauter als der Rest
+        //    sind (die Verdecker, im Metal meist Bass-/Gitarrenkoerper). Angehobene Baender und der Rest
+        //    bleiben unangetastet. Nur was so nicht reicht, wird global ausgeglichen.
+        double eBefore = 0.0, meanLvl = 0.0; int nAud = 0;
         for (int b = 0; b < numBands; ++b)
         {
-            const double p = powerSmooth[(size_t) b] * bandKWeight[(size_t) b];
-            eBefore += p;
-            eAfter += p * std::pow (10.0, bandGainDb[(size_t) b] / 10.0);
+            eBefore += powerSmooth[(size_t) b] * bandKWeight[(size_t) b];
+            if (lvl[(size_t) b] > bandAth[(size_t) b] + 15.0) { meanLvl += lvl[(size_t) b]; ++nAud; }
         }
-        const double comp = (eBefore > 0.0 && eAfter > 0.0) ? 10.0 * std::log10 (eBefore / eAfter) : 0.0;
+        meanLvl = nAud > 0 ? meanLvl / nAud : 0.0;
+
+        double uMax = 0.0;
+        for (int b = 0; b < numBands; ++b)
+        {
+            const bool candidate = bandGainDb[(size_t) b] <= 0.25 && lvl[(size_t) b] > bandAth[(size_t) b] + 15.0;
+            const double u = candidate ? std::max (0.0, lvl[(size_t) b] - meanLvl) : 0.0;
+            scratchU[(size_t) b] = u;
+            uMax = std::max (uMax, u);
+        }
+
+        const double maxCompCut = 4.0 * amount;
+        auto energyWith = [&] (double c)
+        {
+            double e = 0.0;
+            for (int b = 0; b < numBands; ++b)
+            {
+                const double cut = uMax > 0.0 ? std::min (c * scratchU[(size_t) b] / uMax, maxCompCut) : 0.0;
+                e += powerSmooth[(size_t) b] * bandKWeight[(size_t) b] * std::pow (10.0, (bandGainDb[(size_t) b] - cut) / 10.0);
+            }
+            return e;
+        };
+
+        double c = 0.0;
+        const double eRaw = energyWith (0.0);
+        if (eRaw > eBefore && uMax > 0.0)
+        {
+            double lo = 0.0, hi = maxCompCut;
+            for (int it = 0; it < 14; ++it)
+            {
+                const double mid = 0.5 * (lo + hi);
+                (energyWith (mid) > eBefore ? lo : hi) = mid;
+            }
+            c = hi;
+        }
+        for (int b = 0; b < numBands; ++b)
+        {
+            const double target = uMax > 0.0 ? std::min (c * scratchU[(size_t) b] / uMax, maxCompCut) : 0.0;
+            bandCompDb[(size_t) b] = compCoef * bandCompDb[(size_t) b] + (1.0 - compCoef) * target;
+        }
+        // Rest global (z. B. wenn Tame Energie entfernt hat oder das Budget nicht reicht)
+        double eNow = 0.0;
+        for (int b = 0; b < numBands; ++b)
+            eNow += powerSmooth[(size_t) b] * bandKWeight[(size_t) b] * std::pow (10.0, (bandGainDb[(size_t) b] - bandCompDb[(size_t) b]) / 10.0);
+        const double comp = (eBefore > 0.0 && eNow > 0.0) ? 10.0 * std::log10 (eBefore / eNow) : 0.0;
         loudComp = compCoef * loudComp + (1.0 - compCoef) * std::clamp (comp, -6.0, 6.0);
+
+        for (int b = 0; b < numBands; ++b)
+            bandTotal[(size_t) b] = bandGainDb[(size_t) b] - bandCompDb[(size_t) b];
 
         applyBandGains();
     }
@@ -406,18 +476,19 @@ private:
     void applyBandGains()
     {
         // Band-Gains (an den Bandmitten) linear in Bark auf die Bins interpolieren
+        const auto& gdb = bandTotal;
         for (int k = 0; k <= kFftSize / 2; ++k)
         {
             const double z = binBark[(size_t) k];
             double g;
-            if (z <= bandZ.front()) g = bandGainDb.front();
-            else if (z >= bandZ.back()) g = bandGainDb.back();
+            if (z <= bandZ.front()) g = gdb.front();
+            else if (z >= bandZ.back()) g = gdb.back();
             else
             {
                 const double pos = (z - bandZ.front()) / 0.5;
                 const int i = std::min (numBands - 2, (int) std::floor (pos));
                 const double a = pos - i;
-                g = bandGainDb[(size_t) i] * (1.0 - a) + bandGainDb[(size_t) (i + 1)] * a;
+                g = gdb[(size_t) i] * (1.0 - a) + gdb[(size_t) (i + 1)] * a;
             }
             binGain[(size_t) k] = std::pow (10.0, (g + loudComp) / 20.0);
         }
@@ -439,7 +510,8 @@ private:
     std::vector<double> scratchLvl, scratchTarget, scratchRec, maskWeight;
     double powerNorm = 1.0;
     double gainCoef = 0.0, compCoef = 0.0, powCoef = 0.0, loudComp = 0.0;
-    std::vector<double> powerSmooth, bandKWeight, bandLogSum, bandAlpha, binPow, awindow, flatWeight;
+    std::vector<double> powerSmooth, bandKWeight, bandLogSum, bandAlpha, binPow, awindow, flatWeight,
+                        bandPresence, bandCompDb, bandCompTarget, bandTotal, scratchU;
     std::vector<std::complex<double>> abuf;
     double lastRecover = 0.0, lastTame = 0.0;
 };

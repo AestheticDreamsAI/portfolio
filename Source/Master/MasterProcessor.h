@@ -9,6 +9,7 @@
 #pragma once
 
 #include <juce_audio_processors/juce_audio_processors.h>
+#include <juce_dsp/juce_dsp.h>
 #include <deque>
 
 #include "../DSP/AutoEqFitter.h"
@@ -103,7 +104,12 @@ private:
     ironcurve::KWeightedChannel kPre[2], kPost[2];
 
     std::atomic<float> *eqAmount, *clarityAmt, *target, *deharshAmt, *dhFreq, *dhThr, *monoOn, *monoFreq, *width,
-                       *glue, *compThr, *drive, *ceiling;
+                       *glue, *compThr, *drive, *ceiling, *clipOn = nullptr;
+
+    static constexpr int kChunk = 512;
+    std::unique_ptr<juce::dsp::Oversampling<float>> oversampler;
+    juce::AudioBuffer<float> work;
+    std::vector<double> preE, preLvl, preHarsh;
     float lastDhFreq = -1.0f, lastMonoFreq = -1.0f, lastMonoOn = -1.0f;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> driveSmooth;
 
@@ -129,7 +135,7 @@ private:
     std::vector<double> learnedDb, alignedTargetDb, referenceDb;
     double referenceLufs = -100.0;
     juce::String referenceName;
-    std::atomic<bool> refMode { false };
+    std::atomic<bool> refMode { false }, refMonoBass { false };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MasterProcessor)
 };

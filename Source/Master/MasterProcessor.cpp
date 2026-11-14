@@ -58,6 +58,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout MasterProcessor::createLayou
         NormalisableRange<float> (-40.0f, 0.0f, 0.01f), -18.0f, db));
     params.push_back (std::make_unique<AudioParameterFloat> (ParameterID { "drive", 1 }, "Drive",
         NormalisableRange<float> (-12.0f, 18.0f, 0.01f), 0.0f, db));
+    params.push_back (std::make_unique<AudioParameterBool> (ParameterID { "clip", 1 }, "Clipper", true));
     params.push_back (std::make_unique<AudioParameterFloat> (ParameterID { "ceiling", 1 }, "Ceiling",
         NormalisableRange<float> (-3.0f, -0.1f, 0.01f), -1.0f, db));
 
@@ -85,6 +86,7 @@ MasterProcessor::MasterProcessor()
     compThr = apvts.getRawParameterValue ("comp_thr");
     drive = apvts.getRawParameterValue ("drive");
     ceiling = apvts.getRawParameterValue ("ceiling");
+    clipOn = apvts.getRawParameterValue ("clip");
 
     analyzer.onLearnFinished = [this] (std::vector<double> db) { onSpectrumLearned (std::move (db)); };
 
@@ -126,7 +128,16 @@ void MasterProcessor::prepareToPlay (double sampleRate, int)
     acc = {};
     accCount = 0;
 
-    setLatencySamples (clarity.getLatencySamples() + limiter.getLatencySamples());
+    oversampler = std::make_unique<juce::dsp::Oversampling<float>> (2, 2, juce::dsp::Oversampling<float>::filterHalfBandFIREquiripple, true, true);
+    oversampler->initProcessing ((size_t) kChunk);
+    oversampler->reset();
+    work.setSize (2, kChunk);
+    preE.assign ((size_t) kChunk, 0.0);
+    preLvl.assign ((size_t) kChunk, 0.0);
+    preHarsh.assign ((size_t) kChunk, 0.0);
+
+    setLatencySamples (clarity.getLatencySamples() + limiter.getLatencySamples()
+                       + (int) std::round (oversampler->getLatencyInSamples()));
 }
 
 void MasterProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
@@ -148,6 +159,7 @@ void MasterProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Midi
     eqChain.process (buffer, numCh, eqAmount->load());
 
     // Parameter fuer diesen Block
+    const bool ref = refMode.load();
     if (dhFreq->load() != lastDhFreq)
     {
         lastDhFreq = dhFreq->load();
@@ -156,92 +168,131 @@ void MasterProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Midi
     deharsher.setParams (dhThr->load(), 10.0 * deharshAmt->load());
     clarity.setAmount (clarityAmt->load());
 
-    if (monoFreq->load() != lastMonoFreq || monoOn->load() != lastMonoOn)
+    // Im Referenz-Modus: Mono-Bass genau dann, wenn die Referenz ihn hat; Breite unveraendert
+    const float wantMonoFreq = ref ? 120.0f : monoFreq->load();
+    const float wantMonoOn = ref ? (refMonoBass.load() ? 1.0f : 0.0f) : monoOn->load();
+    if (wantMonoFreq != lastMonoFreq || wantMonoOn != lastMonoOn)
     {
-        lastMonoFreq = monoFreq->load();
-        lastMonoOn = monoOn->load();
+        lastMonoFreq = wantMonoFreq;
+        lastMonoOn = wantMonoOn;
         shaper.setMonoBelow (lastMonoFreq, lastMonoOn > 0.5f);
     }
-    shaper.setWidth (width->load());
+    shaper.setWidth (ref ? 1.0 : width->load());
     comp.setParams (compThr->load(), 1.0 + 3.0 * glue->load());
     limiter.setCeilingDb (ceiling->load());
+    const float clipT = juce::Decibels::decibelsToGain (ceiling->load());
     driveSmooth.setTargetValue (juce::Decibels::decibelsToGain (drive->load()));
 
-    const bool ref = refMode.load();
-    float* L = buffer.getWritePointer (0);
-    float* R = stereo ? buffer.getWritePointer (1) : nullptr;
-    float maxDh = 0, maxComp = 0, maxLim = 0;
+    float maxDh = 0, maxComp = 0, maxLim = 0, maxClip = 0;
 
-    for (int i = 0; i < numSamples; ++i)
+    for (int pos = 0; pos < numSamples; pos += kChunk)
     {
-        float l = L[i];
-        float r = stereo ? R[i] : l;
-
-        clarity.process (l, r); // in beiden Modi aktiv
-
-        if (! ref)
+        const int n = juce::jmin (kChunk, numSamples - pos);
+        float* sl = work.getWritePointer (0);
+        float* sr = work.getWritePointer (1);
+        for (int i = 0; i < n; ++i)
         {
-            deharsher.process (l, r);
+            sl[i] = buffer.getSample (0, pos + i);
+            sr[i] = stereo ? buffer.getSample (1, pos + i) : sl[i];
+        }
+
+        // --- Stufe 1: Klarheit, Schaerfe-Schutz, Stereo, Glue, Drive -----------------
+        for (int i = 0; i < n; ++i)
+        {
+            float l = sl[i], r = sr[i];
+
+            clarity.process (l, r); // in beiden Modi aktiv
+            if (! ref)
+                deharsher.process (l, r);
             if (stereo)
                 shaper.process (l, r);
 
             const float g = (float) comp.process (l, r);
             l *= g;
             r *= g;
-        }
 
-        // Lautheit vor Drive (fuer die Drive-Berechnung)
-        const float pl = kPre[0].process (l);
-        const float pr = stereo ? kPre[1].process (r) : 0.0f;
-        acc.msPre += (double) pl * pl + (double) pr * pr;
-        if (! ref)
-        {
-            acc.compLevelDb += comp.lastLevelDb();
-            acc.harshDb += deharsher.lastRatioDb();
-        }
+            // Lautheit vor Drive (fuer die Drive-Berechnung)
+            const float pl = kPre[0].process (l);
+            const float pr = stereo ? kPre[1].process (r) : 0.0f;
+            preE[(size_t) i] = (double) pl * pl + (double) pr * pr;
+            preLvl[(size_t) i] = comp.lastLevelDb();
+            preHarsh[(size_t) i] = deharsher.lastRatioDb();
 
-        const float d = driveSmooth.getNextValue();
-        l *= d;
-        r *= d;
-        limiter.process (l, r);
-
-        const float ql = kPost[0].process (l);
-        const float qr = stereo ? kPost[1].process (r) : 0.0f;
-        acc.msPost += (double) ql * ql + (double) qr * qr;
-
-        if (! ref)
-        {
-            maxDh = std::max (maxDh, (float) deharsher.currentGainReductionDb());
+            if (! ref)
+                maxDh = std::max (maxDh, (float) deharsher.currentGainReductionDb());
             maxComp = std::max (maxComp, (float) comp.currentGainReductionDb());
+
+            const float d = driveSmooth.getNextValue();
+            sl[i] = l * d;
+            sr[i] = r * d;
         }
-        maxLim = std::max (maxLim, (float) limiter.currentGainReductionDb());
 
-        L[i] = l;
-        if (stereo) R[i] = r;
-
-        if (++accCount >= frameLen)
+        // --- Stufe 2: Soft-Clipper mit 4-facher Ueberabtastung ------------------------
+        // Schneidet Spitzen weich ab, bevor der Limiter greifen muss: mehr Dichte und Lautheit
+        // bei weniger Pumpen (so arbeiten auch moderne Metal-Master).
+        if (clipOn->load() > 0.5f)
         {
-            int s1, n1, s2, n2;
-            frameFifo.prepareToWrite (1, s1, n1, s2, n2);
-            if (n1 > 0)
+            juce::dsp::AudioBlock<float> block (work.getArrayOfWritePointers(), 2, (size_t) n);
+            auto up = oversampler->processSamplesUp (block);
+            const float a = 0.6f * clipT, span = clipT - a;
+            for (size_t ch = 0; ch < up.getNumChannels(); ++ch)
             {
-                auto& f = frameBuf[(size_t) s1];
-                f.msPre = acc.msPre / accCount;
-                f.msPost = acc.msPost / accCount;
-                f.compLevelDb = acc.compLevelDb / accCount;
-                f.harshDb = acc.harshDb / accCount;
-                frameFifo.finishedWrite (1);
+                float* d = up.getChannelPointer (ch);
+                for (size_t i = 0; i < up.getNumSamples(); ++i)
+                {
+                    const float x = d[i], ax = std::abs (x);
+                    if (ax > a)
+                    {
+                        const float y = a + span * std::tanh ((ax - a) / span);
+                        maxClip = std::max (maxClip, ax / y);
+                        d[i] = std::copysign (y, x);
+                    }
+                }
             }
-            acc = {};
-            accCount = 0;
+            oversampler->processSamplesDown (block);
+        }
+
+        // --- Stufe 3: True-Peak-Limiter, Messung ---------------------------------------
+        for (int i = 0; i < n; ++i)
+        {
+            float l = sl[i], r = sr[i];
+            limiter.process (l, r);
+
+            const float ql = kPost[0].process (l);
+            const float qr = stereo ? kPost[1].process (r) : 0.0f;
+            acc.msPre += preE[(size_t) i];
+            acc.msPost += (double) ql * ql + (double) qr * qr;
+            acc.compLevelDb += preLvl[(size_t) i];
+            acc.harshDb += preHarsh[(size_t) i];
+            maxLim = std::max (maxLim, (float) limiter.currentGainReductionDb());
+
+            buffer.setSample (0, pos + i, l);
+            if (stereo) buffer.setSample (1, pos + i, r);
+
+            if (++accCount >= frameLen)
+            {
+                int s1, n1, s2, n2;
+                frameFifo.prepareToWrite (1, s1, n1, s2, n2);
+                if (n1 > 0)
+                {
+                    auto& f = frameBuf[(size_t) s1];
+                    f.msPre = acc.msPre / accCount;
+                    f.msPost = acc.msPost / accCount;
+                    f.compLevelDb = acc.compLevelDb / accCount;
+                    f.harshDb = acc.harshDb / accCount;
+                    frameFifo.finishedWrite (1);
+                }
+                acc = {};
+                accCount = 0;
+            }
         }
     }
 
-    // Meter: Maximum seit dem letzten Abholen
+    // Meter: Maximum seit dem letzten Abholen (Clipper zaehlt zum Limiter-Balken)
     auto raise = [] (std::atomic<float>& a, float v) { if (v > a.load()) a.store (v); };
     raise (grDeharsh, maxDh);
     raise (grComp, maxComp);
-    raise (grLimit, maxLim);
+    raise (grLimit, maxLim + (maxClip > 1.0f ? juce::Decibels::gainToDecibels (maxClip) : 0.0f));
 }
 
 // ---------------------------------------------------------------------------
@@ -278,9 +329,7 @@ void MasterProcessor::enterPhase (Phase p)
     {
         case Phase::Spectrum:
             analyzer.startLearning (kSpectrumSeconds);
-            statusText = refMode.load()
-                ? juce::String::fromUTF8 ("1/3 Klang: höre zu … spiel den Refrain oder den lautesten Teil.")
-                : juce::String::fromUTF8 ("1/4 Klangbalance: höre zu … spiel den Refrain oder den lautesten Teil.");
+            statusText = juce::String::fromUTF8 ("1/4 Klangbalance: höre zu … spiel den Refrain oder den lautesten Teil.");
             break;
         case Phase::Dynamics:
             statusText = juce::String::fromUTF8 ("2/4 Dynamik: messe Pegel und Schärfe …");
@@ -312,7 +361,7 @@ void MasterProcessor::onSpectrumLearned (std::vector<double> db)
             alignedTargetDb = result.alignedTargetDb;
         }
         eqparams::applyEq (apvts, result.eq);
-        enterPhase (Phase::Loudness); // keine Dynamik-Phase: Kompressor und Schaerfe-Schutz sind aus
+        enterPhase (Phase::Dynamics); // Kompressor-Schwelle fuer die Dichte der Referenz
         return;
     }
 
@@ -489,12 +538,19 @@ bool MasterProcessor::loadReference (const juce::File& file)
     auto spectrum = SpectrumAnalyzer::analyzeFile (*reader);
 
     // Integrierte Lautheit nach BS.1770 (100-ms-Frames, K-gewichtet, gegated)
-    double lufs = -100.0;
+    double lufs = -100.0, bassSideDb = 0.0;
     {
         const double fs = reader->sampleRate;
         const int numCh = juce::jlimit (1, 2, (int) reader->numChannels);
         KWeighting k; k.prepare (fs);
         KWeightedChannel ch[2]; ch[0].setup (k); ch[1].setup (k);
+        Biquad lpM[2], lpS[2];
+        for (int q = 0; q < 2; ++q)
+        {
+            lpM[q].c = makeCoeffs (FilterType::LowPass, 100.0, q == 0 ? kButterQ1 : kButterQ2, 0.0, fs);
+            lpS[q].c = lpM[q].c;
+        }
+        double eMid = 0.0, eSide = 0.0;
         const int frame = juce::jmax (1, (int) (fs * 0.1));
         juce::AudioBuffer<float> buf (numCh, frame);
         std::vector<double> frames;
@@ -508,6 +564,15 @@ bool MasterProcessor::loadReference (const juce::File& file)
                     const float y = ch[c].process (buf.getSample (c, i));
                     ms += (double) y * y;
                 }
+            if (numCh == 2)
+                for (int i = 0; i < frame; ++i)
+                {
+                    const float l = buf.getSample (0, i), r = buf.getSample (1, i);
+                    const float m = lpM[1].process (lpM[0].process (0.5f * (l + r)));
+                    const float sd = lpS[1].process (lpS[0].process (0.5f * (l - r)));
+                    eMid += (double) m * m;
+                    eSide += (double) sd * sd;
+                }
             frames.push_back (ms / frame);
         }
         // Lautester 20-s-Abschnitt (beim Lernen spielt man ja auch den lauten Teil)
@@ -516,6 +581,9 @@ bool MasterProcessor::loadReference (const juce::File& file)
         else
             for (size_t st = 0; st + 200 <= frames.size(); st += 10)
                 lufs = std::max (lufs, gatedLoudness (std::vector<double> (frames.begin() + (long) st, frames.begin() + (long) st + 200)));
+
+        // Ist der Bass der Referenz mono? (Seite gegenueber Mitte unter 100 Hz)
+        bassSideDb = 10.0 * std::log10 ((eSide + 1.0e-20) / (eMid + 1.0e-20));
     }
 
     if (spectrum.empty() || lufs < -60.0)
@@ -530,9 +598,13 @@ bool MasterProcessor::loadReference (const juce::File& file)
     }
     referenceLufs = lufs;
     referenceName = file.getFileNameWithoutExtension();
+    refMonoBass = bassSideDb < -14.0;
     refMode = true;
-    statusText = juce::String::fromUTF8 ("Referenz „") + referenceName + "“ geladen (" + juce::String (lufs, 1)
-               + juce::String::fromUTF8 (" LUFS). Jetzt deinen Song abspielen und LERNEN drücken.");
+
+    // Lernen startet automatisch: kein Extra-Klick, keine Gefahr, mit alten Einstellungen weiterzuarbeiten
+    startLearning();
+    statusText = juce::String::fromUTF8 ("Referenz „") + referenceName + "“ (" + juce::String (lufs, 1)
+               + juce::String::fromUTF8 (" LUFS) geladen – lerne jetzt automatisch. Spiel den Refrain ab!");
     return true;
 }
 
@@ -545,6 +617,7 @@ void MasterProcessor::clearReference()
     referenceName.clear();
     referenceLufs = -100.0;
     refMode = false;
+    refMonoBass = false;
     statusText = juce::String::fromUTF8 ("Referenz entfernt. Automatik-Modus: LERNEN drücken.");
 }
 
@@ -576,6 +649,7 @@ void MasterProcessor::getStateInformation (juce::MemoryBlock& destData)
     node.setProperty ("reference", statehelpers::joinDoubles (referenceDb), nullptr);
     node.setProperty ("referenceName", referenceName, nullptr);
     node.setProperty ("referenceLufs", referenceLufs, nullptr);
+    node.setProperty ("referenceMonoBass", refMonoBass.load(), nullptr);
     if (auto xml = state.createXml())
         copyXmlToBinary (*xml, destData);
 }
@@ -596,6 +670,7 @@ void MasterProcessor::setStateInformation (const void* data, int sizeInBytes)
     }
     referenceName = node.getProperty ("referenceName").toString();
     referenceLufs = (double) node.getProperty ("referenceLufs", -100.0);
+    refMonoBass = (bool) node.getProperty ("referenceMonoBass", false);
     apvts.replaceState (tree);
 }
 

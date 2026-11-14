@@ -217,13 +217,13 @@ void MasterEditor::timerCallback()
     }
     statusLabel.setText (info, juce::dontSendNotification);
 
-    // Referenz-Modus: nur EQ, Lautheit und Limiter sind aktiv
+    // Referenz-Modus: Schaerfe-Schutz, Breite und Mono-Bass richten sich nach der Referenz
     const bool ref = proc.isReferenceMode();
     referenceButton.setButtonText (ref ? juce::String::fromUTF8 ("REF: ") + proc.getReferenceName()
                                        : juce::String::fromUTF8 ("REFERENZ LADEN …"));
     referenceButton.setColour (juce::TextButton::buttonColourId, ref ? Colours_::result.darker (0.6f) : Colours_::panel);
     for (juce::Component* c : { (juce::Component*) &targetBox, (juce::Component*) &deharshKnob.slider, (juce::Component*) &widthKnob.slider,
-                                (juce::Component*) &monoKnob.slider, (juce::Component*) &glueKnob.slider, (juce::Component*) &monoButton })
+                                (juce::Component*) &monoKnob.slider, (juce::Component*) &monoButton })
     {
         c->setEnabled (! ref);
         c->setAlpha (ref ? 0.35f : 1.0f);

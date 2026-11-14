@@ -115,6 +115,24 @@ int main()
         CHECK (spread, "Keine zwei Glocken auf derselben Stelle");
     }
 
+    // --- Test 1b: Gitarren-Box bei 630 Hz -----------------------------------
+    {
+        std::printf ("Test 1b: Rhythmus-Gitarre mit schmaler Box-Resonanz bei 630 Hz\n");
+        const auto& p = profiles[0];
+        std::vector<double> m ((size_t) n);
+        for (int i = 0; i < n; ++i)
+        {
+            const double f = AnalysisGrid::centerHz (i);
+            m[(size_t) i] = targetDbAt (p, f) - 30.0 + gaussLog (f, 630.0, 0.04, 8.0) + noise (rng);
+        }
+        const auto r = fitEq (p, m, fs);
+        printEq (r);
+        bool box = false;
+        for (int b : { kRes1, kRes2 })
+            box |= r.eq.bands[(size_t) b].enabled && std::abs (r.eq.bands[(size_t) b].freq / 630.0 - 1.0) < 0.06 && r.eq.bands[(size_t) b].gainDb < -3.0;
+        CHECK (box, "Box-Resonanz bei 630 Hz wird mit einer Notch abgesenkt");
+    }
+
     // --- Test 2: Signal entspricht bereits dem Ziel -> fast neutral ----------
     {
         std::printf ("Test 2: Signal entspricht schon der Zielkurve (Snare)\n");

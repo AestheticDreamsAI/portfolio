@@ -137,7 +137,10 @@ stellt sich in ca. 20 Sekunden Musik selbst ein.
 3. **Mono-Bass und Breite**: Unter der eingestellten Frequenz (Standard 120 Hz)
    wird alles mono, darüber ist die Stereobreite regelbar.
 4. **Glue-Kompressor**: Die Schwelle wird automatisch gesetzt, Regler 0–100 %.
-5. **True-Peak-Limiter**: 5 ms Lookahead und 4-fache Überabtastung.
+5. **Soft-Clipper** mit 4-facher Überabtastung: Er rundet Spitzen weich ab,
+   bevor der Limiter greift. Das bringt mehr Dichte und Lautheit bei weniger
+   Pumpen.
+6. **True-Peak-Limiter**: 5 ms Lookahead und 4-fache Überabtastung.
    Standard-Ceiling ist −1 dBTP, das ist streamingsicher.
 
 **Die Lernphasen**, im Button angezeigt:
@@ -161,11 +164,12 @@ Lässt sich ein Mix nicht ohne Verzerrung so laut machen, sagt das Plugin das
 ehrlich, statt zu übersteuern.
 
 **Referenz-Modus, empfohlen:** Über **REFERENZ LADEN …** wählst du eine
-Version deines Songs, die dir gefällt. Danach drückst du LERNEN. Ironcurve Master
-gleicht dann Klang und Lautstärke deines aktuellen Mixes an diese Version an,
-live in FL Studio. In diesem Modus arbeiten nur EQ, Lautstärke und Limiter.
-Kompressor, Schärfe-Schutz und Mono-Bass bleiben aus, damit dein Sound erhalten
-bleibt. Die Referenz wird im FL-Projekt gespeichert.
+Version deines Songs, die dir gefällt, oder einen Song, dessen Sound du magst.
+Das Lernen startet danach automatisch, spiel einfach den Refrain ab.
+Ironcurve Master gleicht dann Klang, Lautstärke und Dichte an die Referenz an.
+Mono-Bass schaltet er nur ein, wenn die Referenz ihn auch hat. Der
+Schärfe-Schutz und der Breiten-Regler sind in diesem Modus aus. Die Referenz
+wird im FL-Projekt gespeichert.
 
 **Einsatz in FL Studio:** Lade das Plugin in den **Master**-Kanal, als letztes
 Plugin oder anstelle eines vorhandenen Limiters. Es bringt seinen eigenen
