@@ -37,6 +37,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout MasterProcessor::createLayou
         StringArray { "Streaming (-14 LUFS)", "Ausgewogen (-11 LUFS)", "Laut (-9 LUFS)", "Metal laut (-7 LUFS)" }, 2));
     params.push_back (std::make_unique<AudioParameterFloat> (ParameterID { "eq_amount", 1 }, String::fromUTF8 ("EQ-Stärke"),
         NormalisableRange<float> (0.0f, 1.5f, 0.01f), 1.0f, pct));
+    params.push_back (std::make_unique<AudioParameterFloat> (ParameterID { "clarity", 1 }, "Klarheit",
+        NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.5f, pct));
     params.push_back (std::make_unique<AudioParameterFloat> (ParameterID { "deharsh", 1 }, String::fromUTF8 ("Schärfe-Schutz"),
         NormalisableRange<float> (0.0f, 1.0f, 0.01f), 0.6f, pct));
     params.push_back (std::make_unique<AudioParameterFloat> (ParameterID { "dh_freq", 1 }, String::fromUTF8 ("Schärfe-Frequenz"),
@@ -71,6 +73,7 @@ MasterProcessor::MasterProcessor()
 {
     eqChain.attach (apvts);
     eqAmount = apvts.getRawParameterValue ("eq_amount");
+    clarityAmt = apvts.getRawParameterValue ("clarity");
     target = apvts.getRawParameterValue ("target");
     deharshAmt = apvts.getRawParameterValue ("deharsh");
     dhFreq = apvts.getRawParameterValue ("dh_freq");
@@ -106,6 +109,7 @@ void MasterProcessor::prepareToPlay (double sampleRate, int)
 {
     analyzer.prepare (sampleRate);
     eqChain.prepare (sampleRate, eqAmount->load());
+    clarity.prepare (sampleRate);
     deharsher.prepare (sampleRate);
     shaper.prepare (sampleRate);
     comp.prepare (sampleRate);
@@ -122,7 +126,7 @@ void MasterProcessor::prepareToPlay (double sampleRate, int)
     acc = {};
     accCount = 0;
 
-    setLatencySamples (limiter.getLatencySamples());
+    setLatencySamples (clarity.getLatencySamples() + limiter.getLatencySamples());
 }
 
 void MasterProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
@@ -150,6 +154,7 @@ void MasterProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Midi
         deharsher.setFrequency (lastDhFreq);
     }
     deharsher.setParams (dhThr->load(), 10.0 * deharshAmt->load());
+    clarity.setAmount (clarityAmt->load());
 
     if (monoFreq->load() != lastMonoFreq || monoOn->load() != lastMonoOn)
     {
@@ -171,6 +176,8 @@ void MasterProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Midi
     {
         float l = L[i];
         float r = stereo ? R[i] : l;
+
+        clarity.process (l, r); // in beiden Modi aktiv
 
         if (! ref)
         {

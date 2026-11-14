@@ -109,6 +109,7 @@ MasterEditor::MasterEditor (MasterProcessor& p)
     monoAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (proc.apvts, "mono_on", monoButton);
 
     setupKnob (eqKnob, "eq_amount", juce::String::fromUTF8 ("EQ-STÄRKE"), juce::String::fromUTF8 ("Wie stark die gelernte Klangkorrektur wirkt"));
+    setupKnob (clarityKnob, "clarity", "KLARHEIT", juce::String::fromUTF8 ("Holt verdeckte Details hervor und zähmt dominante Frequenzen (Hörmodell), Lautheit bleibt gleich"));
     setupKnob (deharshKnob, "deharsh", juce::String::fromUTF8 ("SCHÄRFE-SCHUTZ"), juce::String::fromUTF8 ("Senkt 3–5 kHz nur, wenn es scharf wird (max. 10 dB)"));
     setupKnob (widthKnob, "width", "BREITE", juce::String::fromUTF8 ("Stereobreite oberhalb des Mono-Bass"));
     setupKnob (monoKnob, "mono_freq", "MONO-BASS BIS", juce::String::fromUTF8 ("Unterhalb dieser Frequenz wird alles mono (Kick/Bass druckvoller)"));
@@ -186,8 +187,8 @@ void MasterEditor::resized()
     display.setBounds (10, top, getWidth() - 280, bottom - top - knobRowH - 8);
 
     auto row = juce::Rectangle<int> (10, bottom - knobRowH, getWidth() - 20, knobRowH);
-    Knob* knobs[] = { &eqKnob, &deharshKnob, &widthKnob, &monoKnob, &glueKnob, &ceilingKnob };
-    const int w = row.getWidth() / 6;
+    Knob* knobs[] = { &eqKnob, &clarityKnob, &deharshKnob, &widthKnob, &monoKnob, &glueKnob, &ceilingKnob };
+    const int w = row.getWidth() / 7;
     for (auto* k : knobs)
     {
         auto cell = row.removeFromLeft (w);
@@ -195,7 +196,7 @@ void MasterEditor::resized()
         k->slider.setBounds (cell.reduced (w / 2 - 50, 0));
     }
     // Mono-Schalter unter das Label der Mono-Spalte
-    monoButton.setBounds (monoKnob.label.getX() + monoKnob.label.getWidth() / 2 + 44, monoKnob.label.getBottom() + 4, 110, 22);
+    monoButton.setBounds (monoKnob.label.getX() + monoKnob.label.getWidth() / 2 + 40, monoKnob.label.getBottom() + 4, 100, 22);
 
     statusLabel.setBounds (16, getHeight() - 36, getWidth() - 32, 30);
 }

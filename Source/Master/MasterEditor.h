@@ -49,7 +49,7 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> targetAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> monoAttachment;
 
-    Knob eqKnob, deharshKnob, widthKnob, monoKnob, glueKnob, ceilingKnob;
+    Knob eqKnob, clarityKnob, deharshKnob, widthKnob, monoKnob, glueKnob, ceilingKnob;
     juce::Label statusLabel;
     EqDisplay display;
     MeterPanel meters;

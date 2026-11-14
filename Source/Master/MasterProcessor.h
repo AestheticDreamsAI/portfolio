@@ -1,6 +1,6 @@
 // Ironcurve Master - automatischer Mix-Bus / Master
 //
-// Kette: Auto-EQ -> Schaerfe-Schutz (dyn. EQ) -> Mono-Bass/Breite -> Glue-Kompressor -> Drive -> Limiter
+// Kette: Auto-EQ -> Klarheit (psychoakustisch) -> Schaerfe-Schutz (dyn. EQ) -> Mono-Bass/Breite -> Glue-Kompressor -> Drive -> Limiter
 // Lernen in vier Phasen (ca. 17 s Musik):
 //   1. Spektrum      -> EQ (Mix-Bus-Zielkurve) + Frequenz des Schaerfe-Schutzes
 //   2. Dynamik       -> Kompressor-Schwelle + Schaerfe-Schwelle
@@ -12,6 +12,7 @@
 #include <deque>
 
 #include "../DSP/AutoEqFitter.h"
+#include "../DSP/Clarity.h"
 #include "../DSP/Dynamics.h"
 #include "../Shared/EqChain.h"
 #include "../Shared/EqDisplay.h"
@@ -93,6 +94,7 @@ private:
     SpectrumAnalyzer analyzer;
     EqChain eqChain;
 
+    ironcurve::Clarity clarity;
     ironcurve::DeHarsher deharsher;
     ironcurve::StereoShaper shaper;
     ironcurve::Compressor comp;
@@ -100,7 +102,7 @@ private:
     ironcurve::KWeighting kw;
     ironcurve::KWeightedChannel kPre[2], kPost[2];
 
-    std::atomic<float> *eqAmount, *target, *deharshAmt, *dhFreq, *dhThr, *monoOn, *monoFreq, *width,
+    std::atomic<float> *eqAmount, *clarityAmt, *target, *deharshAmt, *dhFreq, *dhThr, *monoOn, *monoFreq, *width,
                        *glue, *compThr, *drive, *ceiling;
     float lastDhFreq = -1.0f, lastMonoFreq = -1.0f, lastMonoOn = -1.0f;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> driveSmooth;

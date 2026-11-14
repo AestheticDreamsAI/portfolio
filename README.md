@@ -124,6 +124,14 @@ stellt sich in ca. 20 Sekunden Musik selbst ein.
 **Die Kette**, in dieser Reihenfolge:
 
 1. **Auto-EQ**: Klangbalance nach der Mix-Bus-Zielkurve.
+1. **Klarheit** (psychoakustischer dynamischer EQ): Ein Hörmodell erkennt
+   rund 90-mal pro Sekunde, welche Frequenzen gerade von anderen verdeckt
+   werden, und hebt sie an (Recover). Dominante Resonanzen senkt es ab (Tame).
+   Die Lautheit (LUFS) bleibt dabei gleich, das Stereobild exakt erhalten.
+   Grundlage ist veröffentlichte Hörforschung: Bark-Skala, Spreizfunktion nach
+   Schroeder, tonalitätsabhängige Maskierung nach Johnston pro Band,
+   Ruhehörschwelle nach Terhardt und Lautheit nach BS.1770. Der Regler
+   KLARHEIT steht auf 50 % und wirkt im Automatik- und im Referenz-Modus.
 2. **Schärfe-Schutz**: Ein dynamischer EQ, der den schärfsten Bereich zwischen
    2 und 6 kHz nur dann absenkt, wenn es tatsächlich scharf wird (max. 10 dB).
 3. **Mono-Bass und Breite**: Unter der eingestellten Frequenz (Standard 120 Hz)

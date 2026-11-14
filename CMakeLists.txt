@@ -29,6 +29,9 @@ if(IRONCURVE_BUILD_TESTS)
     add_executable(dynamics_tests tests/test_dynamics.cpp)
     target_link_libraries(dynamics_tests PRIVATE ironcurve_core)
     add_test(NAME dynamics_tests COMMAND dynamics_tests)
+    add_executable(clarity_tests tests/test_clarity.cpp)
+    target_link_libraries(clarity_tests PRIVATE ironcurve_core)
+    add_test(NAME clarity_tests COMMAND clarity_tests)
 endif()
 
 # --- Plugin -------------------------------------------------------------------
