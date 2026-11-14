@@ -92,7 +92,20 @@ void SpectrumAnalyzer::timerCallback()
 
     bool gotFrame = false;
 
-    while (fifo.getNumReady() > 0)
+    // Arbeit pro Aufruf begrenzen: Laeuft das Audio schneller als Echtzeit (Export,
+    // Offline-Render, Validatoren), wuerde eine "lies bis leer"-Schleife den
+    // Message-Thread nie wieder freigeben und die Oberflaeche einfrieren.
+    constexpr int maxSamplesPerTick = hopSize * 8;
+    int ready = fifo.getNumReady();
+    if (ready > maxSamplesPerTick)
+    {
+        int s1, n1, s2, n2;
+        fifo.prepareToRead (ready - maxSamplesPerTick, s1, n1, s2, n2); // Aelteste Daten verwerfen
+        fifo.finishedRead (n1 + n2);
+        ready = maxSamplesPerTick;
+    }
+
+    while (ready > 0)
     {
         const int wanted = hopSize - hopFill;
         int start1, size1, start2, size2;
@@ -102,6 +115,9 @@ void SpectrumAnalyzer::timerCallback()
         if (size2 > 0) std::copy_n (fifoBuffer.begin() + start2, size2, hopBuffer.begin() + hopFill + size1);
         fifo.finishedRead (size1 + size2);
         hopFill += size1 + size2;
+        ready -= size1 + size2;
+        if (size1 + size2 == 0)
+            break;
 
         if (hopFill == hopSize)
         {

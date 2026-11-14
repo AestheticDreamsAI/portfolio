@@ -139,6 +139,20 @@ if(IRONCURVE_BUILD_PLUGIN)
         target_link_libraries(LearnHarness PRIVATE
             ironcurve_core juce::juce_audio_utils juce::juce_dsp juce::juce_recommended_config_flags)
 
+        juce_add_console_app(StressHarness PRODUCT_NAME "StressHarness")
+        target_sources(StressHarness PRIVATE
+            tests/StressHarness.cpp
+            Source/PluginProcessor.cpp
+            Source/PluginEditor.cpp
+            Source/Master/MasterProcessor.cpp
+            Source/Master/MasterEditor.cpp
+            ${IRONCURVE_SHARED_SOURCES})
+        target_compile_definitions(StressHarness PRIVATE
+            JucePlugin_Name="Ironcurve Auto EQ" IRONCURVE_NO_PLUGIN_ENTRY=1
+            JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_MODAL_LOOPS_PERMITTED=1)
+        target_link_libraries(StressHarness PRIVATE
+            ironcurve_core juce::juce_audio_utils juce::juce_dsp juce::juce_recommended_config_flags)
+
         juce_add_console_app(MasterHarness PRODUCT_NAME "MasterHarness")
         target_sources(MasterHarness PRIVATE
             tests/MasterHarness.cpp
