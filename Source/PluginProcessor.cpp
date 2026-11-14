@@ -1,65 +1,13 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "Shared/StateHelpers.h"
 
 using namespace ironcurve;
-
-namespace
-{
-    juce::NormalisableRange<float> logRange (float lo, float hi)
-    {
-        return { lo, hi,
-                 [] (float s, float e, float t) { return s * std::pow (e / s, t); },
-                 [] (float s, float e, float v) { return std::log (v / s) / std::log (e / s); },
-                 [] (float s, float e, float v) { return juce::jlimit (s, e, v); } };
-    }
-
-    juce::String formatHz (float v)
-    {
-        return v >= 1000.0f ? juce::String (v / 1000.0f, 2) + " kHz" : juce::String (juce::roundToInt (v)) + " Hz";
-    }
-
-    juce::String joinDoubles (const std::vector<double>& v)
-    {
-        juce::StringArray parts;
-        for (double d : v)
-            parts.add (juce::String (d, 2));
-        return parts.joinIntoString (",");
-    }
-
-    std::vector<double> parseDoubles (const juce::String& s)
-    {
-        std::vector<double> out;
-        for (const auto& t : juce::StringArray::fromTokens (s, ",", ""))
-            if (t.isNotEmpty())
-                out.push_back (t.getDoubleValue());
-        return out;
-    }
-
-    // Stufe -> Band (HPF und LPF haben je zwei Biquads)
-    constexpr int stageBand (int stage)
-    {
-        return stage <= 1 ? kHpf : (stage >= kNumBands ? kLpf : stage - 1);
-    }
-}
-
-juce::String IroncurveProcessor::bandName (int band)
-{
-    switch (band)
-    {
-        case kHpf:       return "Low Cut";
-        case kLowShelf:  return "Low Shelf";
-        case kRes1:      return "Resonanz 1";
-        case kRes2:      return "Resonanz 2";
-        case kHighShelf: return "High Shelf";
-        case kLpf:       return "High Cut";
-        default:         return "Glocke " + juce::String (band - kBell1 + 1);
-    }
-}
 
 juce::AudioProcessorValueTreeState::ParameterLayout IroncurveProcessor::createLayout()
 {
     using namespace juce;
-    std::vector<std::unique_ptr<RangedAudioParameter>> params;
+    eqparams::ParamList params;
 
     StringArray modes;
     for (const auto& p : modeProfiles())
@@ -74,27 +22,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout IroncurveProcessor::createLa
         ParameterID { "output", 1 }, "Ausgang", NormalisableRange<float> (-18.0f, 18.0f, 0.01f), 0.0f,
         AudioParameterFloatAttributes().withLabel ("dB")));
 
-    const auto flat = EqSettings::flat();
-    for (int b = 0; b < kNumBands; ++b)
-    {
-        const auto& d = flat.bands[(size_t) b];
-        const auto name = bandName (b);
-
-        params.push_back (std::make_unique<AudioParameterBool> (ParameterID { bandId (b, "on"), 1 }, name + " An", d.enabled));
-        params.push_back (std::make_unique<AudioParameterFloat> (
-            ParameterID { bandId (b, "freq"), 1 }, name + " Freq", logRange (20.0f, 20000.0f), (float) d.freq,
-            AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return formatHz (v); })));
-
-        if (bandHasGain (b))
-        {
-            params.push_back (std::make_unique<AudioParameterFloat> (
-                ParameterID { bandId (b, "gain"), 1 }, name + " Gain", NormalisableRange<float> (-18.0f, 18.0f, 0.01f), (float) d.gainDb,
-                AudioParameterFloatAttributes().withLabel ("dB")));
-            params.push_back (std::make_unique<AudioParameterFloat> (
-                ParameterID { bandId (b, "q"), 1 }, name + " Q", logRange (0.3f, 16.0f), (float) d.q));
-        }
-    }
-
+    eqparams::addBandParameters (params);
     return { params.begin(), params.end() };
 }
 
@@ -104,17 +32,7 @@ IroncurveProcessor::IroncurveProcessor()
                           .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
       apvts (*this, nullptr, "PARAMS", createLayout())
 {
-    for (int b = 0; b < kNumBands; ++b)
-    {
-        auto& bp = bandParams[(size_t) b];
-        bp.on = apvts.getRawParameterValue (bandId (b, "on"));
-        bp.freq = apvts.getRawParameterValue (bandId (b, "freq"));
-        if (bandHasGain (b))
-        {
-            bp.gain = apvts.getRawParameterValue (bandId (b, "gain"));
-            bp.q = apvts.getRawParameterValue (bandId (b, "q"));
-        }
-    }
+    eqChain.attach (apvts);
     amountParam = apvts.getRawParameterValue ("amount");
     outputParam = apvts.getRawParameterValue ("output");
     modeParam = apvts.getRawParameterValue ("mode");
@@ -142,74 +60,9 @@ bool IroncurveProcessor::isBusesLayoutSupported (const BusesLayout& layouts) con
 void IroncurveProcessor::prepareToPlay (double sampleRate, int)
 {
     analyzer.prepare (sampleRate);
-
-    for (int b = 0; b < kNumBands; ++b)
-    {
-        auto& bp = bandParams[(size_t) b];
-        const bool on = bp.on->load() > 0.5f;
-
-        freqSmooth[(size_t) b].reset (sampleRate, 0.05);
-        qSmooth[(size_t) b].reset (sampleRate, 0.05);
-        gainSmooth[(size_t) b].reset (sampleRate, 0.05);
-
-        float freq = bp.freq->load();
-        if (b == kHpf && ! on) freq = 10.0f;
-        if (b == kLpf && ! on) freq = (float) (sampleRate * 0.49);
-        freqSmooth[(size_t) b].setCurrentAndTargetValue (freq);
-
-        if (bandHasGain (b))
-        {
-            qSmooth[(size_t) b].setCurrentAndTargetValue (bp.q->load());
-            gainSmooth[(size_t) b].setCurrentAndTargetValue (on ? bp.gain->load() * amountParam->load() : 0.0f);
-        }
-        cutActive[(size_t) b] = on;
-    }
-
+    eqChain.prepare (sampleRate, amountParam->load());
     outputSmooth.reset (sampleRate, 0.05);
     outputSmooth.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (outputParam->load()));
-
-    for (auto& ch : filters)
-        for (auto& f : ch)
-            f.reset();
-
-    stageActive.fill (false);
-    updateFilters (true);
-}
-
-void IroncurveProcessor::updateFilters (bool force)
-{
-    const double fs = getSampleRate() > 0.0 ? getSampleRate() : 48000.0;
-
-    for (int stage = 0; stage < kNumStages; ++stage)
-    {
-        const int b = stageBand (stage);
-        const auto type = bandType (b);
-        bool active;
-
-        if (type == FilterType::HighPass || type == FilterType::LowPass)
-        {
-            active = cutActive[(size_t) b];
-            const bool first = (stage == 0 || stage == kNumBands);
-            coeffs[(size_t) stage] = makeCoeffs (type, freqSmooth[(size_t) b].getCurrentValue(),
-                                                 first ? kButterQ1 : kButterQ2, 0.0, fs);
-        }
-        else
-        {
-            const float g = gainSmooth[(size_t) b].getCurrentValue();
-            active = std::abs (g) > 1.0e-4f;
-            if (active || force)
-                coeffs[(size_t) stage] = makeCoeffs (type, freqSmooth[(size_t) b].getCurrentValue(),
-                                                     qSmooth[(size_t) b].getCurrentValue(), g, fs);
-        }
-
-        if (active && ! stageActive[(size_t) stage])
-            for (auto& ch : filters)
-                ch[(size_t) stage].reset();
-
-        stageActive[(size_t) stage] = active;
-        for (auto& ch : filters)
-            ch[(size_t) stage].c = coeffs[(size_t) stage];
-    }
 }
 
 void IroncurveProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
@@ -226,75 +79,14 @@ void IroncurveProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::M
     const int numCh = juce::jmin (2, numIn, buffer.getNumChannels());
     analyzer.pushAudio (buffer, numCh, numSamples); // Analyse vor dem EQ
 
-    const double fs = getSampleRate();
-    const float amount = amountParam->load();
+    eqChain.process (buffer, numCh, amountParam->load());
 
-    // Zielwerte setzen
-    for (int b = 0; b < kNumBands; ++b)
-    {
-        const auto& bp = bandParams[(size_t) b];
-        const bool on = bp.on->load() > 0.5f;
-
-        if (b == kHpf || b == kLpf)
-        {
-            const float parked = b == kHpf ? 10.0f : (float) (fs * 0.49);
-            if (on) cutActive[(size_t) b] = true;
-            freqSmooth[(size_t) b].setTargetValue (on ? bp.freq->load() : parked);
-        }
-        else
-        {
-            freqSmooth[(size_t) b].setTargetValue (bp.freq->load());
-            qSmooth[(size_t) b].setTargetValue (bp.q->load());
-            gainSmooth[(size_t) b].setTargetValue (on ? bp.gain->load() * amount : 0.0f);
-        }
-    }
     outputSmooth.setTargetValue (juce::Decibels::decibelsToGain (outputParam->load()));
-
-    constexpr int subBlock = 32;
-    for (int pos = 0; pos < numSamples; pos += subBlock)
-    {
-        const int len = juce::jmin (subBlock, numSamples - pos);
-
-        bool changed = false;
-        for (int b = 0; b < kNumBands; ++b)
-        {
-            if (freqSmooth[(size_t) b].isSmoothing()) { changed = true; freqSmooth[(size_t) b].skip (len); }
-            if (qSmooth[(size_t) b].isSmoothing())    { changed = true; qSmooth[(size_t) b].skip (len); }
-            if (gainSmooth[(size_t) b].isSmoothing()) { changed = true; gainSmooth[(size_t) b].skip (len); }
-        }
-
-        // Abgeschaltete Cuts erst deaktivieren, wenn sie aus dem Hoerbereich gefahren sind
-        for (int b : { (int) kHpf, (int) kLpf })
-            if (cutActive[(size_t) b] && bandParams[(size_t) b].on->load() < 0.5f && ! freqSmooth[(size_t) b].isSmoothing())
-            {
-                cutActive[(size_t) b] = false;
-                changed = true;
-            }
-
-        if (changed)
-            updateFilters (false);
-
-        for (int ch = 0; ch < numCh; ++ch)
-        {
-            float* data = buffer.getWritePointer (ch, pos);
-            auto& chain = filters[(size_t) ch];
-
-            for (int stage = 0; stage < kNumStages; ++stage)
-            {
-                if (! stageActive[(size_t) stage])
-                    continue;
-                auto& f = chain[(size_t) stage];
-                for (int i = 0; i < len; ++i)
-                    data[i] = f.process (data[i]);
-            }
-        }
-
-        const float g0 = outputSmooth.getCurrentValue();
-        outputSmooth.skip (len);
-        const float g1 = outputSmooth.getCurrentValue();
-        for (int ch = 0; ch < numCh; ++ch)
-            buffer.applyGainRamp (ch, pos, len, g0, g1);
-    }
+    const float g0 = outputSmooth.getCurrentValue();
+    outputSmooth.skip (numSamples);
+    const float g1 = outputSmooth.getCurrentValue();
+    for (int ch = 0; ch < numCh; ++ch)
+        buffer.applyGainRamp (ch, 0, numSamples, g0, g1);
 }
 
 // ---------------------------------------------------------------------------
@@ -347,7 +139,8 @@ void IroncurveProcessor::refit()
         const juce::ScopedLock sl (learnedLock);
         alignedTargetDb = result.alignedTargetDb;
     }
-    applyFitResult (result);
+    eqparams::applyEq (apvts, result.eq);
+    eqparams::setParam (apvts, "output", (float) result.outputTrimDb);
 
     int active = 0;
     for (const auto& b : result.eq.bands)
@@ -361,54 +154,9 @@ void IroncurveProcessor::refit()
 
 void IroncurveProcessor::resetEq()
 {
-    FitResult r;
-    r.eq = EqSettings::flat();
-    applyFitResult (r);
+    eqparams::applyEq (apvts, EqSettings::flat());
+    eqparams::setParam (apvts, "output", 0.0f);
     statusText = juce::String::fromUTF8 ("EQ zurückgesetzt (gelerntes Spektrum bleibt erhalten).");
-}
-
-void IroncurveProcessor::setParam (const juce::String& id, float value)
-{
-    if (auto* p = apvts.getParameter (id))
-    {
-        p->beginChangeGesture();
-        p->setValueNotifyingHost (p->convertTo0to1 (value));
-        p->endChangeGesture();
-    }
-}
-
-void IroncurveProcessor::applyFitResult (const FitResult& r)
-{
-    for (int b = 0; b < kNumBands; ++b)
-    {
-        const auto& band = r.eq.bands[(size_t) b];
-        setParam (bandId (b, "on"), band.enabled ? 1.0f : 0.0f);
-        setParam (bandId (b, "freq"), (float) band.freq);
-        if (bandHasGain (b))
-        {
-            setParam (bandId (b, "gain"), (float) band.gainDb);
-            setParam (bandId (b, "q"), (float) band.q);
-        }
-    }
-    setParam ("output", (float) r.outputTrimDb);
-}
-
-EqSettings IroncurveProcessor::getCurrentEqSettings() const
-{
-    EqSettings s = EqSettings::flat();
-    for (int b = 0; b < kNumBands; ++b)
-    {
-        const auto& bp = bandParams[(size_t) b];
-        auto& band = s.bands[(size_t) b];
-        band.enabled = bp.on->load() > 0.5f;
-        band.freq = bp.freq->load();
-        if (bandHasGain (b))
-        {
-            band.gainDb = bp.gain->load();
-            band.q = bp.q->load();
-        }
-    }
-    return s;
 }
 
 // ---------------------------------------------------------------------------
@@ -416,34 +164,19 @@ EqSettings IroncurveProcessor::getCurrentEqSettings() const
 
 void IroncurveProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
-    auto state = apvts.copyState();
-    auto learned = state.getOrCreateChildWithName ("Learned", nullptr);
-    {
-        const juce::ScopedLock sl (learnedLock);
-        learned.setProperty ("spectrum", joinDoubles (learnedDb), nullptr);
-        learned.setProperty ("target", joinDoubles (alignedTargetDb), nullptr);
-    }
-
-    if (auto xml = state.createXml())
-        copyXmlToBinary (*xml, destData);
+    const juce::ScopedLock sl (learnedLock);
+    statehelpers::save (*this, apvts, destData, learnedDb, alignedTargetDb);
 }
 
 void IroncurveProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
-    auto xml = getXmlFromBinary (data, sizeInBytes);
-    if (xml == nullptr || ! xml->hasTagName (apvts.state.getType()))
-        return;
-
-    auto tree = juce::ValueTree::fromXml (*xml);
-    auto learned = tree.getChildWithName ("Learned");
+    std::vector<double> l, t;
+    if (statehelpers::load (*this, apvts, data, sizeInBytes, l, t))
     {
         const juce::ScopedLock sl (learnedLock);
-        learnedDb = parseDoubles (learned.getProperty ("spectrum").toString());
-        alignedTargetDb = parseDoubles (learned.getProperty ("target").toString());
-        if (learnedDb.size() != (size_t) AnalysisGrid::kNumBands) learnedDb.clear();
-        if (alignedTargetDb.size() != (size_t) AnalysisGrid::kNumBands) alignedTargetDb.clear();
+        learnedDb = std::move (l);
+        alignedTargetDb = std::move (t);
     }
-    apvts.replaceState (tree);
 }
 
 juce::AudioProcessorEditor* IroncurveProcessor::createEditor()
@@ -451,7 +184,9 @@ juce::AudioProcessorEditor* IroncurveProcessor::createEditor()
     return new IroncurveEditor (*this);
 }
 
+#ifndef IRONCURVE_NO_PLUGIN_ENTRY
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
     return new IroncurveProcessor();
 }
+#endif

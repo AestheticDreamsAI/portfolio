@@ -40,9 +40,13 @@ jobs:
         run: |
           curl -sSL -o pv.zip https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_Windows.zip
           unzip -q pv.zip -d pv
-          ./pv/pluginval.exe --strictness-level 5 --validate-in-process --timeout-ms 300000 \
-            --validate "build/IroncurveAutoEQ_artefacts/Release/VST3/Ironcurve Auto EQ.vst3" 2>&1 | tee pluginval-windows.txt
-          exit ${PIPESTATUS[0]}
+          rc=0
+          for p in "IroncurveAutoEQ_artefacts/Release/VST3/Ironcurve Auto EQ.vst3" "IroncurveMaster_artefacts/Release/VST3/Ironcurve Master.vst3"; do
+            ./pv/pluginval.exe --strictness-level 5 --validate-in-process --timeout-ms 300000 \
+              --validate "build/$p" 2>&1 | tee -a pluginval-windows.txt
+            [ ${PIPESTATUS[0]} -eq 0 ] || rc=1
+          done
+          exit $rc
 
       - name: Plugin einsammeln
         if: always()
@@ -50,6 +54,7 @@ jobs:
         run: |
           mkdir -p dist
           cp -R "build/IroncurveAutoEQ_artefacts/Release/VST3/Ironcurve Auto EQ.vst3" dist/ || true
+          cp -R "build/IroncurveMaster_artefacts/Release/VST3/Ironcurve Master.vst3" dist/ || true
           cp README.md dist/
           cp pluginval-windows.txt dist/ 2>/dev/null || true
           if [ "$RUNNER_OS" = "Windows" ]; then

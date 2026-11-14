@@ -4,13 +4,12 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include "DSP/AutoEqFitter.h"
-#include "DSP/Biquad.h"
-#include "DSP/EqModel.h"
+#include "Shared/EqChain.h"
+#include "Shared/EqDisplay.h"
+#include "Shared/EqParams.h"
 #include "SpectrumAnalyzer.h"
 
-#include <array>
-
-class IroncurveProcessor : public juce::AudioProcessor
+class IroncurveProcessor : public juce::AudioProcessor, public EqViewSource
 {
 public:
     IroncurveProcessor();
@@ -44,58 +43,32 @@ public:
     static constexpr double learnSeconds = 8.0;
     void startLearning();
     void cancelLearning();
-    void refit();          // mit gelerntem Spektrum und aktuellem Modus neu berechnen
+    void refit();
     void resetEq();
-
-    bool hasLearnedSpectrum() const;
-    std::vector<double> getLearnedSpectrum() const;
-    std::vector<double> getAlignedTarget() const;
     juce::String getStatusText() const { return statusText; }
 
-    ironcurve::EqSettings getCurrentEqSettings() const; // aus den Parametern
-    float getAmount() const { return amountParam->load(); }
-    double getAnalysisRate() const { return getSampleRate() > 0.0 ? getSampleRate() : 48000.0; }
-
-    SpectrumAnalyzer& getAnalyzer() { return analyzer; }
+    // ---- EqViewSource ----
+    juce::AudioProcessorValueTreeState& getApvts() override { return apvts; }
+    SpectrumAnalyzer& getAnalyzer() override { return analyzer; }
+    ironcurve::EqSettings getCurrentEqSettings() const override { return eqChain.getSettings(); }
+    float getAmount() const override { return amountParam->load(); }
+    double getAnalysisRate() const override { return getSampleRate() > 0.0 ? getSampleRate() : 48000.0; }
+    bool hasLearnedSpectrum() const override;
+    std::vector<double> getLearnedSpectrum() const override;
+    std::vector<double> getAlignedTarget() const override;
 
     juce::AudioProcessorValueTreeState apvts;
 
-    static juce::String bandId (int band, const char* what) { return "b" + juce::String (band) + "_" + what; }
-    static juce::String bandName (int band);
-
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
-    void applyFitResult (const ironcurve::FitResult& r);
-    void setParam (const juce::String& id, float value);
-    void updateFilters (bool force);
 
     SpectrumAnalyzer analyzer;
+    EqChain eqChain;
 
-    struct BandParams
-    {
-        std::atomic<float>* on = nullptr;
-        std::atomic<float>* freq = nullptr;
-        std::atomic<float>* gain = nullptr;
-        std::atomic<float>* q = nullptr;
-    };
-    std::array<BandParams, ironcurve::kNumBands> bandParams;
     std::atomic<float>* amountParam = nullptr;
     std::atomic<float>* outputParam = nullptr;
     std::atomic<float>* modeParam = nullptr;
-
-    // Geglaettete Werte gegen Zipper-Rauschen bei Automation
-    using MulSmooth = juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative>;
-    using LinSmooth = juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear>;
-    std::array<MulSmooth, ironcurve::kNumBands> freqSmooth, qSmooth;
-    std::array<LinSmooth, ironcurve::kNumBands> gainSmooth;
-    LinSmooth outputSmooth;
-    std::array<bool, ironcurve::kNumBands> cutActive {};
-
-    // Stufen: HPF(2) + 8 Glocken/Shelves + LPF(2)
-    static constexpr int kNumStages = ironcurve::kNumBands + 2;
-    std::array<ironcurve::BiquadCoeffs, kNumStages> coeffs {};
-    std::array<bool, kNumStages> stageActive {};
-    std::array<std::array<ironcurve::Biquad, kNumStages>, 2> filters {};
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> outputSmooth;
 
     mutable juce::CriticalSection learnedLock;
     std::vector<double> learnedDb, alignedTargetDb;
