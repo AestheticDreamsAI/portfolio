@@ -113,3 +113,45 @@ Das Plugin nutzt JUCE 8. Für private Nutzung und Open-Source-Projekte unter
 AGPLv3 ist JUCE kostenlos. Wer das Plugin **verkaufen oder closed-source
 weitergeben** will, braucht eine JUCE-Lizenz (Starter ist bis zu einer
 Umsatzgrenze kostenlos), siehe juce.com.
+
+---
+
+# Ironcurve Master
+
+Das zweite Plugin für den **Master-Kanal**. Du drückst einmal LERNEN, und es
+stellt sich in ca. 20 Sekunden Musik selbst ein.
+
+**Die Kette**, in dieser Reihenfolge:
+
+1. **Auto-EQ**: Klangbalance nach der Mix-Bus-Zielkurve.
+2. **Schärfe-Schutz**: Ein dynamischer EQ, der den schärfsten Bereich zwischen
+   2 und 6 kHz nur dann absenkt, wenn es tatsächlich scharf wird (max. 10 dB).
+3. **Mono-Bass und Breite**: Unter der eingestellten Frequenz (Standard 120 Hz)
+   wird alles mono, darüber ist die Stereobreite regelbar.
+4. **Glue-Kompressor**: Die Schwelle wird automatisch gesetzt, Regler 0–100 %.
+5. **True-Peak-Limiter**: 5 ms Lookahead und 4-fache Überabtastung.
+   Standard-Ceiling ist −1 dBTP, das ist streamingsicher.
+
+**Die Lernphasen**, im Button angezeigt:
+
+1. **Klang** (6 s): EQ und Frequenz des Schärfe-Schutzes.
+2. **Dynamik** (3 s): Schwellen für Kompressor und Schärfe-Schutz.
+3. **Lautheit** (4 s): Drive auf die gewählte Ziel-Lautheit.
+4. **Kontrolle** (je 3 s): misst nach dem Limiter nach und korrigiert, bis das
+   Ziel auf ±0,5 LU erreicht ist.
+
+**Ziel-Lautheit:**
+
+| Einstellung | Wert |
+|---|---|
+| Streaming | −14 LUFS |
+| Ausgewogen | −11 LUFS |
+| Laut | −9 LUFS |
+| Metal laut | −7 LUFS |
+
+Lässt sich ein Mix nicht ohne Verzerrung so laut machen, sagt das Plugin das
+ehrlich, statt zu übersteuern.
+
+**Einsatz in FL Studio:** Lade das Plugin in den **Master**-Kanal, als letztes
+Plugin oder anstelle eines vorhandenen Limiters. Es bringt seinen eigenen
+Limiter mit. FL gleicht die Latenz von ca. 5 ms automatisch aus.
