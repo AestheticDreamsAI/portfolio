@@ -125,6 +125,7 @@ private:
     // Message-Thread-Zustand
     Phase phase = Phase::Idle;
     int skipFrames = 0, phaseFrames = 0, verifyRound = 0;
+    bool loudnessCapped = false;
     std::vector<Frame> phaseData;
     std::deque<double> shortTerm;
     double limitGrSum = 0.0;

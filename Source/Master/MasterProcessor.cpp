@@ -11,7 +11,8 @@ namespace
     constexpr int kDynFrames = 30;     // 3 s
     constexpr int kLoudFrames = 40;    // 4 s
     constexpr int kVerifyFrames = 30;  // 3 s pro Kontrollrunde
-    constexpr int kMaxVerifyRounds = 4;
+    constexpr int kMaxVerifyRounds = 7;
+    constexpr double kMaxCleanGr = 3.0;   // mehr mittlere Begrenzung klingt gequetscht
     constexpr double kSpectrumSeconds = 6.0;
 
     double loud (double ms) { return -0.691 + 10.0 * std::log10 (std::max (ms, 1.0e-20)); }
@@ -440,6 +441,7 @@ void MasterProcessor::timerCallback()
             setParam ("drive", (float) juce::jlimit (-12.0, 18.0, getTargetLufs() - l));
             enterPhase (Phase::Verify);
             verifyRound = 0;
+            loudnessCapped = false;
         }
         else if (phase == Phase::Verify && phaseFrames >= kVerifyFrames)
         {
@@ -447,34 +449,54 @@ void MasterProcessor::timerCallback()
             for (const auto& d : phaseData) ms.push_back (d.msPost);
             const double l = gatedLoudness (ms);
             const double diff = getTargetLufs() - l;
-            const double avgLim = limitGrSum / phaseFrames;
+            const double avgLim = limitGrSum / phaseFrames;   // wie hart Clipper + Limiter im Schnitt arbeiten
             const bool atMax = drive->load() >= 17.9f;
             ++verifyRound;
 
-            if (std::abs (diff) <= 0.5 || verifyRound >= kMaxVerifyRounds || (atMax && diff > 0))
+            // Sauberkeits-Grenze: Muesste der Limiter im Schnitt mehr als kMaxCleanGr arbeiten,
+            // wird der Drive zurueckgenommen statt dem Ziel hinterherzujagen.
+            const bool tooHard = avgLim > kMaxCleanGr + 0.5;
+            if (tooHard || (loudnessCapped && diff > 0.0))
+                loudnessCapped = true;
+
+            const bool reached = std::abs (diff) <= 0.5;
+            const bool cappedOk = loudnessCapped && ! tooHard;
+            const bool done = (reached && ! tooHard) || cappedOk || verifyRound >= kMaxVerifyRounds || (atMax && diff > 0 && ! tooHard);
+
+            if (done)
             {
                 phase = Phase::Idle;
-                juce::String s = refMode.load()
-                    ? juce::String::fromUTF8 ("Fertig! Klang und Lautstärke an „") + referenceName
-                      + juce::String::fromUTF8 ("“ angeglichen (") + juce::String (l, 1) + " LUFS, Referenz "
-                      + juce::String (referenceLufs, 1) + " LUFS)."
-                    : juce::String::fromUTF8 ("Fertig! Gemessen ") + juce::String (l, 1) + " LUFS (Ziel "
-                      + juce::String (getTargetLufs(), 0) + juce::String::fromUTF8 ("), Schärfe-Schutz bei ")
-                      + eqparams::formatHz (dhFreq->load()) + ".";
-                if (std::abs (diff) > 0.5)
-                    s << juce::String::fromUTF8 (" Ziel nicht ganz erreicht, der Mix lässt sich ohne Verzerrung kaum lauter machen.");
-                else if (avgLim > 4.0)
-                    s << juce::String::fromUTF8 (" Achtung: Limiter arbeitet hart. Eine leisere Ziel-Lautheit klingt evtl. besser.");
+                juce::String s;
+                if (refMode.load())
+                    s = juce::String::fromUTF8 ("Fertig! Klang wie „") + referenceName + juce::String::fromUTF8 ("“, ");
+                else
+                    s = juce::String::fromUTF8 ("Fertig! Schärfe-Schutz bei ") + eqparams::formatHz (dhFreq->load()) + ", ";
+
+                if (loudnessCapped && diff > 0.5)
+                    s << juce::String::fromUTF8 ("Lautheit auf saubere ") << juce::String (l, 1)
+                      << juce::String::fromUTF8 (" LUFS begrenzt (Ziel ") << juce::String (getTargetLufs(), 1)
+                      << juce::String::fromUTF8 (" LUFS). Lauter ginge nur mit hörbarem Quetschen und Verzerren.");
+                else if (diff > 0.5)
+                    s << juce::String (l, 1) << juce::String::fromUTF8 (" LUFS, Ziel nicht ganz erreicht.");
+                else
+                    s << juce::String (l, 1) << " LUFS (Ziel " << juce::String (getTargetLufs(), 1) << ").";
                 statusText = s;
             }
             else
             {
-                // Der Limiter frisst bei mehr Drive einen Teil der Lautheit: nach oben etwas mehr korrigieren
-                const double step = diff > 0 ? diff * 1.4 : diff;
+                double step;
+                if (tooHard)
+                    step = -(avgLim - kMaxCleanGr);           // zu hart: so viel zuruecknehmen, wie zu viel begrenzt wird
+                else
+                    step = diff > 0 ? diff * 1.4 : diff;      // Limiter frisst bei mehr Drive einen Teil der Lautheit
+                if (loudnessCapped && step > 0)
+                    step = 0.0;                               // nach Begrenzung nie wieder hoch
                 setParam ("drive", (float) juce::jlimit (-12.0, 18.0, (double) drive->load() + step));
                 const int round = verifyRound;
+                const bool capped = loudnessCapped;
                 enterPhase (Phase::Verify);
                 verifyRound = round;
+                loudnessCapped = capped;
             }
         }
     }
