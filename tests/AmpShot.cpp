@@ -7,6 +7,7 @@ int main (int, char** argv)
     AmpProcessor p; p.setPlayConfigDetails (2, 2, 48000, 512); p.prepareToPlay (48000, 512);
     for (int mode = 0; mode < 1; ++mode)
     {
+        p.apvts.getParameter ("stereo")->setValueNotifyingHost (1.0f);
         
         std::unique_ptr<juce::AudioProcessorEditor> ed (p.createEditor());
         ed->setVisible (true);

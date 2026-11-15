@@ -7,7 +7,7 @@ AmpEditor::AmpEditor (AmpProcessor& p) : AudioProcessorEditor (&p), proc (p)
 {
     setLookAndFeel (&lnf);
     cards.resize ((size_t) kNumAmpPresets);
-    setSize (900, 560);
+    setSize (900, 580);
     startTimerHz (15);
 }
 
@@ -19,8 +19,10 @@ AmpEditor::~AmpEditor()
 
 void AmpEditor::resized()
 {
+    stereoBtn = { getWidth() - 16 - 110, 16, 110, 34 };
+    monoBtn = stereoBtn.translated (-118, 0);
     auto area = getLocalBounds().reduced (16);
-    area.removeFromTop (60);
+    area.removeFromTop (70);
     guitarArea = area.removeFromLeft (area.getWidth() * 2 / 3);
     area.removeFromLeft (14);
     bassArea = area;
@@ -56,6 +58,25 @@ void AmpEditor::paint (juce::Graphics& g)
     g.drawText ("GITARRE", guitarArea.getX(), guitarArea.getY(), 200, 20, juce::Justification::centredLeft);
     g.drawText ("BASS", bassArea.getX(), bassArea.getY(), 200, 20, juce::Justification::centredLeft);
 
+    // Mono / Stereo
+    for (int k = 0; k < 2; ++k)
+    {
+        const auto r = (k == 0 ? monoBtn : stereoBtn).toFloat();
+        const bool on = (k == 1) == proc.isStereo();
+        g.setColour (on ? Colours_::accent : Colours_::panel);
+        g.fillRoundedRectangle (r, 6.0f);
+        if (! on) { g.setColour (Colours_::grid); g.drawRoundedRectangle (r.reduced (0.5f), 6.0f, 1.0f); }
+        g.setColour (on ? juce::Colours::white : Colours_::text);
+        g.setFont (font (14.0f, true));
+        g.drawText (k == 0 ? "MONO" : "STEREO", r, juce::Justification::centred);
+    }
+    g.setColour (Colours_::dimText);
+    g.setFont (font (11.0f));
+    g.drawText (juce::String::fromUTF8 (proc.isStereo() ? "Klingt wie zwei Gitarren links + rechts"
+                                                        : "Eine Spur, Mitte (für links/rechts selbst doppeln)"),
+                monoBtn.getX() - 40, monoBtn.getBottom() + 4, stereoBtn.getRight() - monoBtn.getX() + 40, 16,
+                juce::Justification::centredRight);
+
     const int sel = proc.getPresetIndex();
     for (int i = 0; i < kNumAmpPresets; ++i)
     {
@@ -86,8 +107,21 @@ int AmpEditor::presetAt (juce::Point<int> pt) const
     return -1;
 }
 
+void AmpEditor::setStereo (bool on)
+{
+    if (auto* prm = proc.apvts.getParameter ("stereo"))
+    {
+        prm->beginChangeGesture();
+        prm->setValueNotifyingHost (on ? 1.0f : 0.0f);
+        prm->endChangeGesture();
+    }
+    repaint();
+}
+
 void AmpEditor::mouseUp (const juce::MouseEvent& e)
 {
+    if (monoBtn.contains (e.getPosition()))   { setStereo (false); return; }
+    if (stereoBtn.contains (e.getPosition())) { setStereo (true); return; }
     const int i = presetAt (e.getPosition());
     if (i < 0) return;
     if (auto* prm = proc.apvts.getParameter ("preset"))
@@ -113,5 +147,8 @@ void AmpEditor::mouseExit (const juce::MouseEvent&)
 void AmpEditor::timerCallback()
 {
     const int sel = proc.getPresetIndex();
-    if (sel != shownPreset) { shownPreset = sel; repaint(); }
+    if (sel != shownPreset || proc.isStereo() != shownStereo)
+    {
+        shownPreset = sel; shownStereo = proc.isStereo(); repaint();
+    }
 }

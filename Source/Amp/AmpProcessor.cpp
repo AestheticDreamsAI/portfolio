@@ -10,6 +10,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout AmpProcessor::createLayout()
     for (auto& pr : ampPresets()) names.add (String::fromUTF8 (pr.name));
     std::vector<std::unique_ptr<RangedAudioParameter>> p;
     p.push_back (std::make_unique<AudioParameterChoice> (ParameterID { "preset", 1 }, "Preset", names, 0));
+    p.push_back (std::make_unique<AudioParameterChoice> (ParameterID { "stereo", 1 }, "Mono/Stereo", StringArray { "Mono", "Stereo" }, 0));
     return { p.begin(), p.end() };
 }
 
@@ -20,6 +21,7 @@ AmpProcessor::AmpProcessor()
       apvts (*this, nullptr, "PARAMS", createLayout())
 {
     preset = apvts.getRawParameterValue ("preset");
+    stereo = apvts.getRawParameterValue ("stereo");
 }
 
 int AmpProcessor::getPresetIndex() const
@@ -51,6 +53,9 @@ void AmpProcessor::prepareToPlay (double sampleRate, int)
     levelRelease = 1.0 - std::exp (-1.0 / (0.4 * sampleRate));
     heldDecay = std::pow (10.0, -0.5 / 20.0 / sampleRate); // 0,5 dB/s
     if (inGain <= 0.0) inGain = targetGain();
+    delayLine.assign ((size_t) (0.05 * sampleRate) + 8, 0.0f);
+    gateLine.assign (delayLine.size(), 0.0f);
+    delayPos = gatePos = 0;
     const auto p = readParams();
     for (auto& g : guitar) g.setParams (p);
     for (auto& b : bass) b.setParams (p);
@@ -76,8 +81,21 @@ void AmpProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuf
         for (auto& b : bass) b.prepare (getSampleRate());
         lastBass = bassMode;
     }
-    if (bassMode) for (auto& b : bass) b.setParams (p);
-    else          for (auto& g : guitar) g.setParams (p);
+    // Stereo: zweite Seite leicht anders "gespielt" (andere Klangfarbe + kurze Verzoegerung bei Gitarre),
+    // damit es wie zwei Aufnahmen links/rechts klingt. Mono: beide Seiten identisch.
+    const bool wide = isStereo();
+    auto p2 = p;
+    if (wide)
+    {
+        p2.gain = juce::jlimit (0.0, 1.0, p.gain + 0.04);
+        p2.presence = juce::jlimit (0.0, 1.0, p.presence + 0.08);
+        p2.treble = juce::jlimit (0.0, 1.0, p.treble - 0.05);
+        p2.mid = juce::jlimit (0.0, 1.0, p.mid + 0.06);
+        p2.tight = juce::jlimit (0.0, 1.0, p.tight + 0.05);
+    }
+    if (bassMode) { bass[0].setParams (p); bass[1].setParams (p2); }
+    else          { guitar[0].setParams (p); guitar[1].setParams (p2); }
+    const int delaySamples = (wide && ! bassMode) ? (int) std::lround (0.011 * getSampleRate()) : 0;
 
     // Gate: aus bei 0, sonst Schwelle zwischen -75 dBFS (sanft) und -35 dBFS (streng)
     gate.setEnabled (p.gate > 0.01);
@@ -96,17 +114,39 @@ void AmpProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuf
         const double tg = targetGain();
         inGain += (tg < inGain ? levelAttack : levelRelease) * (tg - inGain);
         const float l = (float) (L[i] * inGain), r = R ? (float) (R[i] * inGain) : l;
-        const double g = gate.process (std::max (std::abs (l), std::abs (r)));
+        const float m = 0.5f * (l + r); // DI ist Mono: beide Eingangsseiten zusammen
+        const double g = gate.process (std::abs (m));
         gSum += (float) g;
         double ol, orr;
-        if (bassMode) { ol = bass[0].process (l); orr = R ? bass[1].process (r) : ol; }
-        else          { ol = guitar[0].process (l); orr = R ? guitar[1].process (r) : ol; }
+        if (! wide)
+        {
+            ol = bassMode ? bass[0].process (m) : guitar[0].process (m);
+            orr = ol;
+        }
+        else
+        {
+            delayLine[(size_t) delayPos] = m;
+            int rp = delayPos - delaySamples; if (rp < 0) rp += (int) delayLine.size();
+            const float md = delayLine[(size_t) rp];
+            delayPos = (delayPos + 1) % (int) delayLine.size();
+            ol = bassMode ? bass[0].process (m) : guitar[0].process (m);
+            orr = bassMode ? bass[1].process (md) : guitar[1].process (md);
+        }
         L[i] = (float) (ol * g);
-        if (R) R[i] = (float) (orr * g);
+        if (R) R[i] = (float) (orr * gDelayed (g, wide ? delaySamples : 0));
         peak = std::max (peak, std::abs (L[i]));
     }
     gateMeter.store (n > 0 ? gSum / (float) n : 0.0f);
     if (peak > outMeter.load()) outMeter.store (peak);
+}
+
+float AmpProcessor::gDelayed (double g, int d)
+{
+    // Gate der rechten Seite um dieselbe Zeit verzoegern wie das Signal
+    gateLine[(size_t) gatePos] = (float) g;
+    int rp = gatePos - d; if (rp < 0) rp += (int) gateLine.size();
+    gatePos = (gatePos + 1) % (int) gateLine.size();
+    return gateLine[(size_t) rp];
 }
 
 double AmpProcessor::targetGain() const

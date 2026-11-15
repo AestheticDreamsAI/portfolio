@@ -3,11 +3,12 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 #include "AmpTestSignals.h"
 using namespace amptest;
-static void render (int preset, const std::vector<float>& L, const std::vector<float>& R, const juce::String& path)
+static void render (int preset, bool wide, const std::vector<float>& L, const std::vector<float>& R, const juce::String& path)
 {
     const double fs = 48000; const int n = (int) L.size(), blk = 512;
     AmpProcessor p; p.setPlayConfigDetails (2, 2, fs, blk);
     p.apvts.getParameter ("preset")->setValueNotifyingHost (p.apvts.getParameter ("preset")->convertTo0to1 ((float) preset));
+    p.apvts.getParameter ("stereo")->setValueNotifyingHost (wide ? 1.0f : 0.0f);
     p.prepareToPlay (fs, blk);
     juce::AudioBuffer<float> out (2, n); juce::MidiBuffer m;
     for (int s = 0; s < n; s += blk)
@@ -33,8 +34,9 @@ int main (int, char** argv)
     {
         const auto& pr = ironcurve::ampPresets()[(size_t) i];
         const auto name = juce::String (i + 1).paddedLeft ('0', 2) + "_" + juce::String::fromUTF8 (pr.name).replace (" & ", "_").replace (" ", "_");
-        if (pr.bass) render (i, b, b, dir + "/" + name + ".wav");
-        else         render (i, gL, gR, dir + "/" + name + ".wav");
+        if (pr.bass) render (i, false, b, b, dir + "/" + name + ".wav");
+        else         render (i, false, gL, gL, dir + "/" + name + ".wav");
     }
+    render (0, true, gL, gL, dir + "/01_Dunkel_Breit_STEREO.wav");
     return 0;
 }
