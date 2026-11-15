@@ -210,7 +210,7 @@ void AmpProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuf
 juce::AudioBuffer<float> AmpProcessor::makeCabIR (double fs)
 {
     // Minimalphasiger Lautsprecher-Impuls aus der Klangkurve (Cepstrum-Verfahren)
-    const int order = fs > 60000.0 ? 13 : 12; // 4096 bzw. 8192 Punkte
+    const int order = fs > 60000.0 ? 15 : 14; // feine Aufloesung fuer die Tiefen
     const int N = 1 << order;
     juce::dsp::FFT fft (order);
     std::vector<std::complex<float>> a ((size_t) N), b ((size_t) N);
@@ -240,7 +240,7 @@ juce::AudioBuffer<float> AmpProcessor::makeCabIR (double fs)
     for (auto& c : b) c = std::exp (c);
     fft.perform (b.data(), a.data(), true);
 
-    const int len = juce::jmin (N, (int) std::lround (0.045 * fs)); // 45 ms reichen fuer eine Box
+    const int len = juce::jmin (N, (int) std::lround (0.150 * fs)); // 150 ms: genug fuer die Tiefen-Resonanz
     juce::AudioBuffer<float> ir (1, len);
     const int fade = len / 4;
     for (int n = 0; n < len; ++n)

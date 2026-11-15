@@ -3,6 +3,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "../DSP/AmpDSP.h"
+#include "../DSP/AmpV2.h"
 #include "AmpPresets.h"
 #include <juce_dsp/juce_dsp.h>
 
@@ -53,7 +54,7 @@ private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
     ironcurve::AmpParams readParams() const;
 
-    std::array<ironcurve::GuitarAmpChannel, 2> guitar;
+    std::array<ironcurve::GuitarAmpChannel2, 2> guitar;
     std::array<ironcurve::BassAmpChannel, 2> bass;
     ironcurve::NoiseGate gates[2];
     double midEnergy = 0.0, sideEnergy = 0.0;
