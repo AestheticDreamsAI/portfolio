@@ -243,9 +243,10 @@ public:
         {
             lastTight = p.tight;
             setupStages (p.tight);
-            const double hpf = 70.0 * std::pow (220.0 / 70.0, p.tight);
-            pre[0].c = makeCoeffs (FilterType::HighPass, hpf, 0.707, 0.0, sr);
-            pre[1].c = makeCoeffs (FilterType::HighPass, hpf, 0.707, 0.0, sr);
+            // Nur EIN sanfter Low-Cut vor der Verzerrung (vorher zwei steile -> duenner Klang)
+            const double hpf = 55.0 * std::pow (150.0 / 55.0, p.tight);
+            pre[0].c = makeCoeffs (FilterType::HighPass, hpf, 0.6, 0.0, sr);
+            pre[1].c = makeCoeffs (FilterType::HighPass, 20.0, 0.707, 0.0, sr);
             pre[2].c = makeCoeffs (FilterType::Peak, 800.0, 0.7, 2.0 + 3.0 * p.tight, sr);
             pre[3].c = makeCoeffs (FilterType::LowPass, 9000.0, 0.707, 0.0, sr);
         }
@@ -266,7 +267,7 @@ public:
         for (auto& s : stages) s.gain = std::pow (10.0, per / 20.0);
         inGain = std::pow (10.0, p.inputDb / 20.0) * 4.0; // DI liegt typisch bei -18 dBFS
         outGain = std::pow (10.0, p.levelDb / 20.0);
-        useCab = p.cab;
+        useCab = false; // Box kommt als Faltung im Plugin (CabCurve)
     }
 
     inline double process (double x) noexcept
@@ -301,9 +302,9 @@ private:
     {
         const double g[4] = { stages[0].gain, stages[1].gain, stages[2].gain, stages[3].gain };
         stages[0].setup (fsHigh, 20.0, 12000.0, 0.15);
-        stages[1].setup (fsHigh, 30.0 + 50.0 * t, 9000.0, 0.25);
-        stages[2].setup (fsHigh, 40.0 + 110.0 * t, 7500.0, 0.20);
-        stages[3].setup (fsHigh, 50.0 + 130.0 * t, 6500.0, 0.30);
+        stages[1].setup (fsHigh, 25.0 + 35.0 * t, 9000.0, 0.25);
+        stages[2].setup (fsHigh, 30.0 + 60.0 * t, 7500.0, 0.20);
+        stages[3].setup (fsHigh, 30.0 + 50.0 * t, 6500.0, 0.30);
         for (int i = 0; i < 4; ++i) stages[(size_t) i].gain = g[i];
     }
 

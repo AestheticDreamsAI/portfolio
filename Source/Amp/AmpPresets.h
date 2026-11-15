@@ -32,18 +32,18 @@ inline const std::array<AmpPreset, kNumAmpPresets>& ampPresets()
 {
     static const std::array<AmpPreset, kNumAmpPresets> list { {
         //                                                                                   gate tight gain  bass  mid   treb  pres  depth level
-        { "Dunkel & Breit",     "Richtung Bad Omens: dunkel, groß, poliert",             false, mk (0.55, 0.70, 0.62, 0.55, 0.42, 0.45, 0.45, 0.60, -4.3) },
-        { "Brutal Tight",       "Richtung Architects: hart, präzise, aggressiv",         false, mk (0.70, 0.85, 0.72, 0.45, 0.58, 0.55, 0.62, 0.45, -5.4) },
-        { "Metalcore Klassik",  "Richtung frühe BMTH / Killswitch: roh und bissig",      false, mk (0.60, 0.75, 0.75, 0.58, 0.50, 0.55, 0.68, 0.55, -5.4) },
-        { "Riesig & Weit",      "Richtung Sleep Token: weniger Gain, viel Wucht",        false, mk (0.40, 0.55, 0.55, 0.60, 0.45, 0.45, 0.40, 0.70, -4.3) },
-        { "Djent",              "Richtung Spiritbox / Periphery: knackig, klar",         false, mk (0.70, 0.90, 0.60, 0.40, 0.62, 0.60, 0.65, 0.35, -5.6) },
-        { "Alternative Crunch", "Richtung Deftones: rauer, weniger verzerrt",            false, mk (0.30, 0.45, 0.45, 0.52, 0.60, 0.50, 0.50, 0.50, -4.8) },
-        { "Modern Metal",       "Allrounder: fett, tight, druckvoll",                    false, mk (0.50, 0.65, 0.65, 0.50, 0.50, 0.50, 0.52, 0.50, -4.9) },
-        { "Solo",               "Für Leads: singend, setzt sich durch",                  false, mk (0.35, 0.55, 0.75, 0.45, 0.70, 0.55, 0.55, 0.45, -5.5) },
-        { "Metalcore Bass",     "Richtung Bad Omens: sauberes Fundament + Knurren",      true,  mk (0.50, 0.60, 0.62, 0.52, 0.48, 0.48, 0.50, 0.50, -6.8, 200.0, 0.0, 0.55) },
-        { "Knurrig",            "Viel Biss, für harte Parts",                            true,  mk (0.50, 0.60, 0.80, 0.50, 0.65, 0.55, 0.50, 0.50, -12.1, 250.0, -1.0, 0.80) },
-        { "Klick",              "Richtung Djent: klarer Anschlag, schneidet durch",     true,  mk (0.55, 0.60, 0.70, 0.45, 0.55, 0.70, 0.50, 0.50, -10.1, 220.0, 0.0, 0.65) },
-        { "Tief & Sauber",      "Fast unverzerrt, nur Druck",                            true,  mk (0.45, 0.60, 0.35, 0.55, 0.45, 0.45, 0.50, 0.50, -1.0, 150.0, 2.0, 0.30) },
+        { "Dunkel & Breit",     "Richtung Bad Omens: dunkel, groß, poliert",             false, mk (0.55, 0.70, 0.62, 0.55, 0.42, 0.45, 0.45, 0.60, -9.8) },
+        { "Brutal Tight",       "Richtung Architects: hart, präzise, aggressiv",         false, mk (0.70, 0.85, 0.72, 0.45, 0.58, 0.55, 0.62, 0.45, -8.3) },
+        { "Metalcore Klassik",  "Richtung frühe BMTH / Killswitch: roh und bissig",      false, mk (0.60, 0.75, 0.75, 0.58, 0.50, 0.55, 0.68, 0.55, -9.9) },
+        { "Riesig & Weit",      "Richtung Sleep Token: weniger Gain, viel Wucht",        false, mk (0.40, 0.55, 0.55, 0.60, 0.45, 0.45, 0.40, 0.70, -11.0) },
+        { "Djent",              "Richtung Spiritbox / Periphery: knackig, klar",         false, mk (0.70, 0.90, 0.60, 0.40, 0.62, 0.60, 0.65, 0.35, -7.3) },
+        { "Alternative Crunch", "Richtung Deftones: rauer, weniger verzerrt",            false, mk (0.30, 0.45, 0.45, 0.52, 0.60, 0.50, 0.50, 0.50, -9.2) },
+        { "Modern Metal",       "Allrounder: fett, tight, druckvoll",                    false, mk (0.50, 0.65, 0.65, 0.50, 0.50, 0.50, 0.52, 0.50, -9.3) },
+        { "Solo",               "Für Leads: singend, setzt sich durch",                  false, mk (0.35, 0.55, 0.75, 0.45, 0.70, 0.55, 0.55, 0.45, -9.3) },
+        { "Metalcore Bass",     "Richtung Bad Omens: sauberes Fundament + Knurren",      true,  mk (0.50, 0.60, 0.62, 0.52, 0.48, 0.48, 0.50, 0.50, -4.8, 200.0, 0.0, 0.55) },
+        { "Knurrig",            "Viel Biss, für harte Parts",                            true,  mk (0.50, 0.60, 0.80, 0.50, 0.65, 0.55, 0.50, 0.50, -10.1, 250.0, -1.0, 0.80) },
+        { "Klick",              "Richtung Djent: klarer Anschlag, schneidet durch",     true,  mk (0.55, 0.60, 0.70, 0.45, 0.55, 0.70, 0.50, 0.50, -8.1, 220.0, 0.0, 0.65) },
+        { "Tief & Sauber",      "Fast unverzerrt, nur Druck",                            true,  mk (0.45, 0.60, 0.35, 0.55, 0.45, 0.45, 0.50, 0.50, 1.0, 150.0, 2.0, 0.30) },
     } };
     return list;
 }

@@ -210,6 +210,11 @@ if(IRONCURVE_BUILD_PLUGIN)
         target_compile_definitions(AmpRender PRIVATE IRONCURVE_NO_PLUGIN_ENTRY=1 JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
         target_link_libraries(AmpRender PRIVATE ironcurve_core juce::juce_audio_utils juce::juce_dsp juce::juce_recommended_config_flags)
 
+        juce_add_console_app(AmpFile PRODUCT_NAME "AmpFile")
+        target_sources(AmpFile PRIVATE tests/AmpFile.cpp Source/Amp/AmpProcessor.cpp Source/Amp/AmpEditor.cpp ${IRONCURVE_SHARED_SOURCES})
+        target_compile_definitions(AmpFile PRIVATE IRONCURVE_NO_PLUGIN_ENTRY=1 JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+        target_link_libraries(AmpFile PRIVATE ironcurve_core juce::juce_audio_utils juce::juce_dsp juce::juce_recommended_config_flags)
+
         juce_add_console_app(MasterHarness PRODUCT_NAME "MasterHarness")
         target_sources(MasterHarness PRIVATE
             tests/MasterHarness.cpp
