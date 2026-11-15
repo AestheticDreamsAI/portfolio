@@ -3,6 +3,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "../DSP/AmpDSP.h"
+#include "AmpPresets.h"
 
 #include <array>
 
@@ -36,7 +37,9 @@ public:
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
 
-    bool isBassMode() const { return mode->load() > 0.5f; }
+    bool isBassMode() const;
+    int getPresetIndex() const;
+    float getInputGainDb() const { return (float) juce::Decibels::gainToDecibels (inGain); }
     float getGateOpen() const { return gateMeter.load(); }
     float getOutputLevel() const { return outMeter.exchange (0.0f); }
 
@@ -50,8 +53,10 @@ private:
     std::array<ironcurve::BassAmpChannel, 2> bass;
     ironcurve::NoiseGate gate;
 
-    std::atomic<float> *mode, *input, *gateAmt, *tight, *gain, *bassP, *mid, *treble, *presence, *depth, *level, *cab,
-                       *xover, *lowLevel, *grit;
+    double targetGain() const;
+    static constexpr double kRefPeakGuitarDb = -5.3, kRefPeakBassDb = -7.8; // Spitzenpegel, fuer die die Presets abgestimmt sind
+    std::atomic<float>* preset = nullptr;
+    double held = 0.0, inGain = 0.0, levelAttack = 0.0, levelRelease = 0.0, heldDecay = 1.0;
     std::atomic<float> gateMeter { 0.0f };
     mutable std::atomic<float> outMeter { 0.0f };
     bool lastBass = false;

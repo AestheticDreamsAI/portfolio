@@ -3,11 +3,11 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 #include "AmpTestSignals.h"
 using namespace amptest;
-static void render (int mode, const std::vector<float>& L, const std::vector<float>& R, const juce::String& path)
+static void render (int preset, const std::vector<float>& L, const std::vector<float>& R, const juce::String& path)
 {
     const double fs = 48000; const int n = (int) L.size(), blk = 512;
     AmpProcessor p; p.setPlayConfigDetails (2, 2, fs, blk);
-    p.apvts.getParameter ("mode")->setValueNotifyingHost ((float) mode);
+    p.apvts.getParameter ("preset")->setValueNotifyingHost (p.apvts.getParameter ("preset")->convertTo0to1 ((float) preset));
     p.prepareToPlay (fs, blk);
     juce::AudioBuffer<float> out (2, n); juce::MidiBuffer m;
     for (int s = 0; s < n; s += blk)
@@ -28,8 +28,13 @@ int main (int, char** argv)
     juce::ScopedJuceInitialiser_GUI init;
     const juce::String dir (argv[1]);
     auto gL = guitarRiff (48000, 12, 1), gR = guitarRiff (48000, 12, 3);
-    render (0, gL, gR, dir + "/Ironcurve_Amp_Gitarre_Probe.wav");
     auto b = bassRiff (48000, 12, 2);
-    render (1, b, b, dir + "/Ironcurve_Amp_Bass_Probe.wav");
+    for (int i = 0; i < ironcurve::kNumAmpPresets; ++i)
+    {
+        const auto& pr = ironcurve::ampPresets()[(size_t) i];
+        const auto name = juce::String (i + 1).paddedLeft ('0', 2) + "_" + juce::String::fromUTF8 (pr.name).replace (" & ", "_").replace (" ", "_");
+        if (pr.bass) render (i, b, b, dir + "/" + name + ".wav");
+        else         render (i, gL, gR, dir + "/" + name + ".wav");
+    }
     return 0;
 }

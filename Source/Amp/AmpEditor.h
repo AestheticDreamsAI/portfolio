@@ -1,4 +1,4 @@
-// Ironcurve Amp - Editor
+// Ironcurve Amp - Editor: nur Presets anklicken, sonst nichts
 #pragma once
 
 #include "AmpProcessor.h"
@@ -12,30 +12,19 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+    void mouseUp (const juce::MouseEvent&) override;
+    void mouseMove (const juce::MouseEvent&) override;
+    void mouseExit (const juce::MouseEvent&) override;
 
 private:
     void timerCallback() override;
-    void layoutKnobs();
-
-    struct Knob
-    {
-        juce::Slider slider;
-        juce::Label label;
-        std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachment;
-        bool guitar = true, bass = true;
-    };
-    Knob& addKnob (const juce::String& id, const juce::String& text, bool guitar, bool bass, const juce::String& tip);
+    int presetAt (juce::Point<int>) const;
 
     AmpProcessor& proc;
     IroncurveLookAndFeel lnf;
-    juce::TooltipWindow tooltips { this, 600 };
-
-    juce::TextButton guitarButton { "GITARRE" }, bassButton { "BASS" };
-    juce::ToggleButton cabButton;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> cabAttachment;
-    std::vector<std::unique_ptr<Knob>> knobs;
-    bool shownBass = false;
-    float gateShown = 0.0f, outShown = 0.0f;
+    std::vector<juce::Rectangle<int>> cards;
+    juce::Rectangle<int> guitarArea, bassArea;
+    int shownPreset = -1, hover = -1;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AmpEditor)
 };

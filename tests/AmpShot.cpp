@@ -5,9 +5,9 @@ int main (int, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI init;
     AmpProcessor p; p.setPlayConfigDetails (2, 2, 48000, 512); p.prepareToPlay (48000, 512);
-    for (int mode = 0; mode < 2; ++mode)
+    for (int mode = 0; mode < 1; ++mode)
     {
-        p.apvts.getParameter ("mode")->setValueNotifyingHost ((float) mode);
+        
         std::unique_ptr<juce::AudioProcessorEditor> ed (p.createEditor());
         ed->setVisible (true);
         juce::MessageManager::getInstance()->runDispatchLoopUntil (300);

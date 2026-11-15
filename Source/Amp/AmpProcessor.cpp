@@ -6,28 +6,10 @@ using namespace ironcurve;
 juce::AudioProcessorValueTreeState::ParameterLayout AmpProcessor::createLayout()
 {
     using namespace juce;
+    StringArray names;
+    for (auto& pr : ampPresets()) names.add (String::fromUTF8 (pr.name));
     std::vector<std::unique_ptr<RangedAudioParameter>> p;
-    auto pct = AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return String (v * 10.0f, 1); }); // 0..10 wie am Amp
-    auto db = AudioParameterFloatAttributes().withLabel ("dB");
-    auto knob = [&] (const char* id, const String& name, float def)
-    { p.push_back (std::make_unique<AudioParameterFloat> (ParameterID { id, 1 }, name, NormalisableRange<float> (0.0f, 1.0f, 0.001f), def, pct)); };
-
-    p.push_back (std::make_unique<AudioParameterChoice> (ParameterID { "mode", 1 }, "Modus", StringArray { "Gitarre", "Bass" }, 0));
-    p.push_back (std::make_unique<AudioParameterFloat> (ParameterID { "input", 1 }, "Eingang", NormalisableRange<float> (-12.0f, 12.0f, 0.1f), 0.0f, db));
-    knob ("gate", "Gate", 0.5f);
-    knob ("tight", "Tight", 0.6f);
-    knob ("gain", "Gain", 0.65f);
-    knob ("bass", "Bass", 0.5f);
-    knob ("mid", "Mitten", 0.5f);
-    knob ("treble", String::fromUTF8 ("Höhen"), 0.5f);
-    knob ("presence", "Presence", 0.5f);
-    knob ("depth", "Depth", 0.5f);
-    p.push_back (std::make_unique<AudioParameterFloat> (ParameterID { "level", 1 }, "Ausgang", NormalisableRange<float> (-24.0f, 12.0f, 0.1f), 0.0f, db));
-    p.push_back (std::make_unique<AudioParameterBool> (ParameterID { "cab", 1 }, "Box", true));
-    p.push_back (std::make_unique<AudioParameterFloat> (ParameterID { "xover", 1 }, "Weiche",
-        NormalisableRange<float> (80.0f, 400.0f, 1.0f, 0.5f), 200.0f, AudioParameterFloatAttributes().withLabel ("Hz")));
-    p.push_back (std::make_unique<AudioParameterFloat> (ParameterID { "lowlevel", 1 }, "Tiefband", NormalisableRange<float> (-24.0f, 6.0f, 0.1f), 0.0f, db));
-    knob ("grit", "Grit", 0.6f);
+    p.push_back (std::make_unique<AudioParameterChoice> (ParameterID { "preset", 1 }, "Preset", names, 0));
     return { p.begin(), p.end() };
 }
 
@@ -37,11 +19,15 @@ AmpProcessor::AmpProcessor()
                           .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
       apvts (*this, nullptr, "PARAMS", createLayout())
 {
-    auto r = [this] (const char* id) { return apvts.getRawParameterValue (id); };
-    mode = r ("mode"); input = r ("input"); gateAmt = r ("gate"); tight = r ("tight"); gain = r ("gain");
-    bassP = r ("bass"); mid = r ("mid"); treble = r ("treble"); presence = r ("presence"); depth = r ("depth");
-    level = r ("level"); cab = r ("cab"); xover = r ("xover"); lowLevel = r ("lowlevel"); grit = r ("grit");
+    preset = apvts.getRawParameterValue ("preset");
 }
+
+int AmpProcessor::getPresetIndex() const
+{
+    return juce::jlimit (0, kNumAmpPresets - 1, (int) std::lround (preset->load()));
+}
+
+bool AmpProcessor::isBassMode() const { return ampPresets()[(size_t) getPresetIndex()].bass; }
 
 bool AmpProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
@@ -53,19 +39,7 @@ bool AmpProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 
 AmpParams AmpProcessor::readParams() const
 {
-    AmpParams p;
-    p.inputDb = input->load();
-    p.gate = gateAmt->load();
-    p.tight = tight->load();
-    p.gain = gain->load();
-    p.bass = bassP->load(); p.mid = mid->load(); p.treble = treble->load();
-    p.presence = presence->load(); p.depth = depth->load();
-    p.levelDb = level->load();
-    p.cab = cab->load() > 0.5f;
-    p.crossoverHz = xover->load();
-    p.lowDb = lowLevel->load();
-    p.grit = grit->load();
-    return p;
+    return ampPresets()[(size_t) getPresetIndex()].p;
 }
 
 void AmpProcessor::prepareToPlay (double sampleRate, int)
@@ -73,6 +47,10 @@ void AmpProcessor::prepareToPlay (double sampleRate, int)
     for (auto& g : guitar) g.prepare (sampleRate);
     for (auto& b : bass) b.prepare (sampleRate);
     gate.prepare (sampleRate);
+    levelAttack = 1.0 - std::exp (-1.0 / (0.002 * sampleRate));
+    levelRelease = 1.0 - std::exp (-1.0 / (0.4 * sampleRate));
+    heldDecay = std::pow (10.0, -0.5 / 20.0 / sampleRate); // 0,5 dB/s
+    if (inGain <= 0.0) inGain = targetGain();
     const auto p = readParams();
     for (auto& g : guitar) g.setParams (p);
     for (auto& b : bass) b.setParams (p);
@@ -110,7 +88,14 @@ void AmpProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuf
     float peak = 0.0f, gSum = 0.0f;
     for (int i = 0; i < n; ++i)
     {
-        const float l = L[i], r = R ? R[i] : l;
+        // Automatischer Eingangspegel: lernt, wie laut die Gitarre/der Bass gespielt wird,
+        // und bringt sie auf den Pegel, fuer den die Presets abgestimmt sind.
+        const double a = std::max (std::abs ((double) L[i]), std::abs ((double) (R ? R[i] : L[i])));
+        if (a > held) held = a;
+        else if (a > held * 0.5) held *= heldDecay;
+        const double tg = targetGain();
+        inGain += (tg < inGain ? levelAttack : levelRelease) * (tg - inGain);
+        const float l = (float) (L[i] * inGain), r = R ? (float) (R[i] * inGain) : l;
         const double g = gate.process (std::max (std::abs (l), std::abs (r)));
         gSum += (float) g;
         double ol, orr;
@@ -124,9 +109,18 @@ void AmpProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuf
     if (peak > outMeter.load()) outMeter.store (peak);
 }
 
+double AmpProcessor::targetGain() const
+{
+    const double ref = juce::Decibels::decibelsToGain (isBassMode() ? kRefPeakBassDb : kRefPeakGuitarDb);
+    if (held < 1.0e-5) return 1.0; // noch nichts gespielt
+    return juce::jlimit (juce::Decibels::decibelsToGain (-12.0), juce::Decibels::decibelsToGain (24.0), ref / held);
+}
+
 void AmpProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
-    if (auto xml = apvts.copyState().createXml())
+    auto state = apvts.copyState();
+    state.setProperty ("learnedPeak", held, nullptr);
+    if (auto xml = state.createXml())
         copyXmlToBinary (*xml, destData);
 }
 
@@ -134,7 +128,12 @@ void AmpProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
     if (auto xml = getXmlFromBinary (data, sizeInBytes))
         if (xml->hasTagName (apvts.state.getType()))
-            apvts.replaceState (juce::ValueTree::fromXml (*xml));
+        {
+            auto vt = juce::ValueTree::fromXml (*xml);
+            held = (double) vt.getProperty ("learnedPeak", 0.0);
+            inGain = targetGain();
+            apvts.replaceState (vt);
+        }
 }
 
 juce::AudioProcessorEditor* AmpProcessor::createEditor()
