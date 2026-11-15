@@ -4,6 +4,7 @@
 #pragma once
 
 #include "AmpDSP.h"
+#include <cstdint>
 
 namespace ironcurve
 {
@@ -29,6 +30,10 @@ struct AmpVoice
     double tone[3] = { 0, 0, 0 };
     // Netzteil-Nachgeben der Endstufe: laute Anschlaege druecken kurz den Pegel
     double sagAmt = 0.0, sagRelMs = 150.0;
+    // Eingangsrauschen des Verstaerkers (dBFS, <= -119 = aus): gehoert zum Klang echter High-Gain-Amps
+    double noiseDb = -120.0;
+    // Tiefen-Weg: laeuft an der Verzerrung vorbei (nur leicht gesaettigt) und wird danach zugemischt
+    double lowXHz = 200.0, lowDriveDb = 0.0, lowLevelDb = -120.0;
 };
 
 class OnePole
@@ -80,7 +85,7 @@ public:
         sr = fs; fsHigh = fs * Oversampler4x::kFactor;
         os.reset();
         for (auto* f : { &hp1, &lp1, &hp2, &lp2, &hp3, &lp3, &bHp1, &bHp2, &bLp, &dc }) f->reset();
-        bMid.reset(); q2 = q3 = 0.0; sagEnv = 0.0;
+        bMid.reset(); q2 = q3 = 0.0; sagEnv = 0.0; lowDelay.fill (0.0); lowPos = 0; lowLp1.reset(); lowLp2.reset();
         for (auto& b : preEq) b.reset();
         for (auto& b : toneEq) b.reset();
         apply();
@@ -91,6 +96,19 @@ public:
     inline double process (double x) noexcept
     {
         // Boost bei Basisrate
+        if (noiseGain > 0.0)
+        {
+            rng = rng * 1664525u + 1013904223u;
+            x += noiseGain * ((double) (rng >> 8) * (1.0 / 8388608.0) - 1.0);
+        }
+        double low = 0.0;
+        if (gLowLevel > 0.0)
+        {
+            const double l = lowLp2.lp (lowLp1.lp (x));
+            lowDelay[(size_t) lowPos] = softClip (l * gLowDrive, 2.0) / gLowDrive;
+            lowPos = (lowPos + 1) % kLowDelay;
+            low = lowDelay[(size_t) lowPos] * gLowLevel; // um die Oversampling-Latenz verzoegert
+        }
         double s = bHp2.hp (bHp1.hp (x));
         s = bMid.process ((float) s);
         s = bLp.lp (s);
@@ -125,7 +143,7 @@ public:
             t = softClip (t * gPower + v.powerBias, v.powerKnee) - powerOffset;
             u = t;
         }
-        return dc.hp (os.down (up)) * gOut;
+        return dc.hp (os.down (up)) * gOut + low;
     }
 
 private:
@@ -150,6 +168,9 @@ private:
         toneEq[2].c = makeCoeffs (FilterType::HighShelf, 2500.0, 0.7, v.tone[2], fsHigh);
         sagAtt = 1.0 - std::exp (-1.0 / (0.003 * fsHigh));
         sagRel = 1.0 - std::exp (-1.0 / (std::max (5.0, v.sagRelMs) * 0.001 * fsHigh));
+        lowLp1.setLp (v.lowXHz, sr); lowLp2.setLp (v.lowXHz, sr);
+        gLowDrive = db2g (v.lowDriveDb); gLowLevel = v.lowLevelDb > -119.0 ? db2g (v.lowLevelDb) : 0.0;
+        noiseGain = v.noiseDb > -119.0 ? db2g (v.noiseDb) * 1.732 : 0.0; // gleichverteilt -> Effektivwert
         gridK = v.gridAmt * 0.02 * (192000.0 / fsHigh);
         gridDecay = std::exp (-1.0 / (std::max (0.5, v.gridTauMs) * 0.001 * fsHigh));
         clipOffset = softClip (v.clipAsym, v.clipKnee);
@@ -158,7 +179,13 @@ private:
 
     AmpVoice v;
     double sr = 48000.0, fsHigh = 192000.0;
-    double g1 = 1, g2 = 1, gClip = 1, gPower = 1, gOut = 1, clipOffset = 0, powerOffset = 0, q2 = 0, q3 = 0, gridK = 0, gridDecay = 1, sagEnv = 0, sagAtt = 0, sagRel = 0;
+    double g1 = 1, g2 = 1, gClip = 1, gPower = 1, gOut = 1, clipOffset = 0, powerOffset = 0, q2 = 0, q3 = 0, gridK = 0, gridDecay = 1, sagEnv = 0, sagAtt = 0, sagRel = 0, noiseGain = 0;
+    uint32_t rng = 22222u;
+    static constexpr int kLowDelay = Oversampler4x::kTaps / Oversampler4x::kFactor; // = 16
+    std::array<double, kLowDelay> lowDelay {};
+    int lowPos = 0;
+    double gLowDrive = 1.0, gLowLevel = 0.0;
+    OnePole lowLp1, lowLp2;
     BqD preEq[4], toneEq[3];
     Oversampler4x os;
     OnePole hp1, lp1, hp2, lp2, hp3, lp3, bHp1, bHp2, bLp, dc;

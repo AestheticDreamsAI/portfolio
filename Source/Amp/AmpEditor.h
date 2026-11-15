@@ -23,9 +23,11 @@ private:
     AmpProcessor& proc;
     IroncurveLookAndFeel lnf;
     std::vector<juce::Rectangle<int>> cards;
-    juce::Rectangle<int> guitarArea, bassArea, monoBtn, stereoBtn;
+    juce::Rectangle<int> guitarArea, bassArea, monoBtn, stereoBtn, tuneDownBtn, tuneUpBtn, tuneArea;
     int shownPreset = -1, hover = -1;
     bool shownStereo = false;
+    int shownTune = 99;
+    void stepTune (int delta);
     void setStereo (bool);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AmpEditor)

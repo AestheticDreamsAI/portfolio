@@ -11,6 +11,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout AmpProcessor::createLayout()
     for (auto& pr : ampPresets()) names.add (String::fromUTF8 (pr.name));
     std::vector<std::unique_ptr<RangedAudioParameter>> p;
     p.push_back (std::make_unique<AudioParameterChoice> (ParameterID { "preset", 1 }, "Preset", names, 0));
+    p.push_back (std::make_unique<AudioParameterInt> (ParameterID { "transpose", 1 }, "Tiefer stimmen", -12, 0, -12));
     p.push_back (std::make_unique<AudioParameterChoice> (ParameterID { "stereo", 1 }, "Mono/Stereo", StringArray { "Mono", "Stereo" }, 0));
     return { p.begin(), p.end() };
 }
@@ -23,6 +24,7 @@ AmpProcessor::AmpProcessor()
 {
     preset = apvts.getRawParameterValue ("preset");
     stereo = apvts.getRawParameterValue ("stereo");
+    transpose = apvts.getRawParameterValue ("transpose");
 }
 
 int AmpProcessor::getPresetIndex() const
@@ -66,7 +68,13 @@ void AmpProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     cabConv.loadImpulseResponse (makeCabIR (sampleRate), sampleRate, juce::dsp::Convolution::Stereo::no,
                                  juce::dsp::Convolution::Trim::no, juce::dsp::Convolution::Normalise::no);
     cabConv.reset();
-    setLatencySamples (Oversampler4x::latency() + cabConv.getLatency());
+    shifter.presetDefault (2, (float) sampleRate);
+    shiftLatency = shifter.inputLatency() + shifter.outputLatency();
+    const int maxBlock = juce::jmax (64, samplesPerBlock);
+    shiftIn.setSize (2, maxBlock); shiftOut.setSize (2, maxBlock);
+    bypassDelay.setSize (2, shiftLatency + 1); bypassDelay.clear(); bypassPos = 0;
+    lastSemis = 1000;
+    setLatencySamples (Oversampler4x::latency() + cabConv.getLatency() + shiftLatency);
 }
 
 void AmpProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
@@ -78,6 +86,8 @@ void AmpProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuf
         buffer.clear (ch, 0, n);
     const int numCh = juce::jmin (2, numIn, buffer.getNumChannels());
     if (numCh <= 0) return;
+
+    applyTranspose (buffer, numCh, n);
 
     const bool bassMode = isBassMode();
     auto p = readParams();
@@ -205,6 +215,45 @@ void AmpProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuf
     }
     gateMeter.store (n > 0 ? gSum / (float) n : 0.0f);
     if (peak > outMeter.load()) outMeter.store (peak);
+}
+
+void AmpProcessor::applyTranspose (juce::AudioBuffer<float>& buffer, int numCh, int n)
+{
+    // Laeuft immer mit gleicher Verzoegerung: bei 0 Halbtoenen nur eine Verzoegerungsleitung (klangneutral)
+    const int semis = getTranspose();
+    if (semis != lastSemis)
+    {
+        shifter.setTransposeSemitones ((float) semis);
+        if (lastSemis == 0 || lastSemis == 1000) shifter.reset();
+        lastSemis = semis;
+    }
+    const int maxBlock = shiftIn.getNumSamples(), dl = bypassDelay.getNumSamples();
+    for (int start = 0; start < n; start += maxBlock)
+    {
+        const int len = juce::jmin (maxBlock, n - start);
+        if (semis == 0)
+        {
+            for (int i = 0; i < len; ++i)
+            {
+                for (int c = 0; c < numCh; ++c)
+                {
+                    float* d = buffer.getWritePointer (c) + start;
+                    const float in = d[i];
+                    d[i] = bypassDelay.getSample (c, bypassPos);
+                    bypassDelay.setSample (c, bypassPos, in);
+                }
+                bypassPos = (bypassPos + 1) % (dl - 1);
+            }
+            continue;
+        }
+        for (int c = 0; c < 2; ++c)
+            shiftIn.copyFrom (c, 0, buffer, juce::jmin (c, numCh - 1), start, len);
+        float* in[2] = { shiftIn.getWritePointer (0), shiftIn.getWritePointer (1) };
+        float* out[2] = { shiftOut.getWritePointer (0), shiftOut.getWritePointer (1) };
+        shifter.process (in, len, out, len);
+        for (int c = 0; c < numCh; ++c)
+            buffer.copyFrom (c, start, shiftOut, c, 0, len);
+    }
 }
 
 juce::AudioBuffer<float> AmpProcessor::makeCabIR (double fs)

@@ -130,6 +130,7 @@ if(IRONCURVE_BUILD_PLUGIN)
             juce::juce_recommended_lto_flags
             juce::juce_recommended_warning_flags)
 
+    set(IRONCURVE_THIRD_PARTY ${CMAKE_CURRENT_SOURCE_DIR}/third_party/signalsmith-stretch ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
     # --- Ironcurve Amp (drittes Plugin) -------------------------------------------
     juce_add_plugin(IroncurveAmp
         COMPANY_NAME "Ironcurve"
@@ -159,7 +160,8 @@ if(IRONCURVE_BUILD_PLUGIN)
         target_compile_options(IroncurveAmp PRIVATE /utf-8)
     endif()
 
-    target_link_libraries(IroncurveAmp
+    target_include_directories(IroncurveAmp PRIVATE ${IRONCURVE_THIRD_PARTY})
+        target_link_libraries(IroncurveAmp
         PRIVATE
             ironcurve_core
             juce::juce_audio_utils
@@ -197,22 +199,26 @@ if(IRONCURVE_BUILD_PLUGIN)
         target_compile_definitions(StressHarness PRIVATE
             JucePlugin_Name="Ironcurve Auto EQ" IRONCURVE_NO_PLUGIN_ENTRY=1
             JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_MODAL_LOOPS_PERMITTED=1)
+        target_include_directories(StressHarness PRIVATE ${IRONCURVE_THIRD_PARTY})
         target_link_libraries(StressHarness PRIVATE
             ironcurve_core juce::juce_audio_utils juce::juce_dsp juce::juce_recommended_config_flags)
 
         juce_add_console_app(AmpShot PRODUCT_NAME "AmpShot")
         target_sources(AmpShot PRIVATE tests/AmpShot.cpp Source/Amp/AmpProcessor.cpp Source/Amp/AmpEditor.cpp ${IRONCURVE_SHARED_SOURCES})
         target_compile_definitions(AmpShot PRIVATE IRONCURVE_NO_PLUGIN_ENTRY=1 JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_MODAL_LOOPS_PERMITTED=1)
+        target_include_directories(AmpShot PRIVATE ${IRONCURVE_THIRD_PARTY})
         target_link_libraries(AmpShot PRIVATE ironcurve_core juce::juce_audio_utils juce::juce_dsp juce::juce_recommended_config_flags)
 
         juce_add_console_app(AmpRender PRODUCT_NAME "AmpRender")
         target_sources(AmpRender PRIVATE tests/AmpRender.cpp Source/Amp/AmpProcessor.cpp Source/Amp/AmpEditor.cpp ${IRONCURVE_SHARED_SOURCES})
         target_compile_definitions(AmpRender PRIVATE IRONCURVE_NO_PLUGIN_ENTRY=1 JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+        target_include_directories(AmpRender PRIVATE ${IRONCURVE_THIRD_PARTY})
         target_link_libraries(AmpRender PRIVATE ironcurve_core juce::juce_audio_utils juce::juce_dsp juce::juce_recommended_config_flags)
 
         juce_add_console_app(AmpFile PRODUCT_NAME "AmpFile")
         target_sources(AmpFile PRIVATE tests/AmpFile.cpp Source/Amp/AmpProcessor.cpp Source/Amp/AmpEditor.cpp ${IRONCURVE_SHARED_SOURCES})
         target_compile_definitions(AmpFile PRIVATE IRONCURVE_NO_PLUGIN_ENTRY=1 JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+        target_include_directories(AmpFile PRIVATE ${IRONCURVE_THIRD_PARTY})
         target_link_libraries(AmpFile PRIVATE ironcurve_core juce::juce_audio_utils juce::juce_dsp juce::juce_recommended_config_flags)
 
         juce_add_console_app(MasterHarness PRODUCT_NAME "MasterHarness")

@@ -12,6 +12,7 @@ int main (int argc, char** argv)
     auto* pp = p.apvts.getParameter ("preset"); pp->setValueNotifyingHost (pp->convertTo0to1 ((float) atoi (argv[3])));
     p.apvts.getParameter ("stereo")->setValueNotifyingHost (argc > 4 && atoi (argv[4]) ? 1.0f : 0.0f);
     p.forceNoCab = argc > 5 && atoi (argv[5]);
+    { auto* tp = p.apvts.getParameter ("transpose"); tp->setValueNotifyingHost (tp->convertTo0to1 ((float) (argc > 6 ? atoi (argv[6]) : -12))); }
     p.prepareToPlay (fs, blk);
     juce::MidiBuffer m;
     for (int t = 0; t < 100 && ! p.isCabReady(); ++t)

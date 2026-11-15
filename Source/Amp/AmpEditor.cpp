@@ -21,6 +21,9 @@ void AmpEditor::resized()
 {
     stereoBtn = { getWidth() - 16 - 110, 16, 110, 34 };
     monoBtn = stereoBtn.translated (-118, 0);
+    tuneArea = { monoBtn.getX() - 230, 16, 210, 34 };
+    tuneDownBtn = tuneArea.withWidth (34);
+    tuneUpBtn = tuneArea.withLeft (tuneArea.getRight() - 34);
     auto area = getLocalBounds().reduced (16);
     area.removeFromTop (70);
     guitarArea = area.removeFromLeft (area.getWidth() * 2 / 3);
@@ -50,7 +53,7 @@ void AmpEditor::paint (juce::Graphics& g)
     g.drawText ("IRONCURVE AMP", 18, 14, 400, 28, juce::Justification::centredLeft);
     g.setColour (Colours_::dimText);
     g.setFont (font (12.5f));
-    g.drawText (juce::String::fromUTF8 ("Einfach einen Sound anklicken. Lautstärke regelt sich selbst."),
+    g.drawText (juce::String::fromUTF8 ("Einfach einen Sound anklicken."),
                 18, 42, 600, 18, juce::Justification::centredLeft);
 
     g.setColour (Colours_::text);
@@ -58,6 +61,24 @@ void AmpEditor::paint (juce::Graphics& g)
     g.drawText ("GITARRE", guitarArea.getX(), guitarArea.getY(), 200, 20, juce::Justification::centredLeft);
     g.drawText ("BASS", bassArea.getX(), bassArea.getY(), 200, 20, juce::Justification::centredLeft);
 
+    // Tiefer stimmen
+    for (int k = 0; k < 2; ++k)
+    {
+        const auto r = (k == 0 ? tuneDownBtn : tuneUpBtn).toFloat();
+        g.setColour (Colours_::panel); g.fillRoundedRectangle (r, 6.0f);
+        g.setColour (Colours_::grid); g.drawRoundedRectangle (r.reduced (0.5f), 6.0f, 1.0f);
+        g.setColour (Colours_::text); g.setFont (font (18.0f, true));
+        g.drawText (k == 0 ? juce::String::fromUTF8 ("\xe2\x88\x92") : juce::String ("+"), r, juce::Justification::centred);
+    }
+    {
+        const int t = proc.getTranspose();
+        g.setColour (Colours_::text); g.setFont (font (14.0f, true));
+        g.drawText (t == 0 ? juce::String ("STIMMUNG 0") : "STIMMUNG " + juce::String (t),
+                    tuneArea.reduced (36, 0), juce::Justification::centred);
+        g.setColour (Colours_::dimText); g.setFont (font (11.0f));
+        g.drawText (juce::String::fromUTF8 (t == -12 ? "Eine Oktave tiefer" : (t == 0 ? "Gitarre bleibt wie gespielt" : "Gitarre klingt tiefer")),
+                    tuneArea.getX(), tuneArea.getBottom() + 4, tuneArea.getWidth(), 16, juce::Justification::centred);
+    }
     // Mono / Stereo
     for (int k = 0; k < 2; ++k)
     {
@@ -118,8 +139,22 @@ void AmpEditor::setStereo (bool on)
     repaint();
 }
 
+void AmpEditor::stepTune (int delta)
+{
+    if (auto* prm = proc.apvts.getParameter ("transpose"))
+    {
+        const int t = juce::jlimit (-12, 0, proc.getTranspose() + delta);
+        prm->beginChangeGesture();
+        prm->setValueNotifyingHost (prm->convertTo0to1 ((float) t));
+        prm->endChangeGesture();
+    }
+    repaint();
+}
+
 void AmpEditor::mouseUp (const juce::MouseEvent& e)
 {
+    if (tuneDownBtn.contains (e.getPosition())) { stepTune (-1); return; }
+    if (tuneUpBtn.contains (e.getPosition()))   { stepTune (1); return; }
     if (monoBtn.contains (e.getPosition()))   { setStereo (false); return; }
     if (stereoBtn.contains (e.getPosition())) { setStereo (true); return; }
     const int i = presetAt (e.getPosition());
@@ -147,8 +182,9 @@ void AmpEditor::mouseExit (const juce::MouseEvent&)
 void AmpEditor::timerCallback()
 {
     const int sel = proc.getPresetIndex();
-    if (sel != shownPreset || proc.isStereo() != shownStereo)
+    if (sel != shownPreset || proc.isStereo() != shownStereo || proc.getTranspose() != shownTune)
     {
+        shownTune = proc.getTranspose();
         shownPreset = sel; shownStereo = proc.isStereo(); repaint();
     }
 }
